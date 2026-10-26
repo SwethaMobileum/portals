@@ -31,6 +31,7 @@ async function api(url, opt) {
   if (!r.ok) {
     const e = new Error((j && j.error) || r.statusText);
     e.data = j;
+    e.status = r.status;
     throw e;
   }
   return j;
@@ -213,6 +214,18 @@ function removeFromSharedList(key, item) {
   try { document.cookie = `${key}=${str}; path=/; domain=localhost; max-age=2592000; SameSite=Lax`; } catch (e) {}
   try { localStorage.setItem(key, JSON.stringify(current)); } catch (e) {}
   return current;
+}
+
+async function migrateLegacyPackageRemovals() {
+  const ids = getSharedList('deleted_packages');
+  for (const id of ids) {
+    try {
+      await api('/api/packages/' + encodeURIComponent(id), { method: 'DELETE' });
+    } catch (e) {
+      if (e.status !== 404) throw e;
+    }
+    removeFromSharedList('deleted_packages', id);
+  }
 }
 
 // ==========================================================================
@@ -408,5 +421,3 @@ function syncWithServer() {
     }
   }, 400);
 }
-
-

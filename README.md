@@ -24,7 +24,7 @@ The platform provides a synchronized ecosystem where **Telecom Operators**, **En
 - **Database**: Single Excel workbook (`shared/CallerID-Database.xlsx`) managed via `exceljs`.
   - Concurrency & journal protection (`.pending-changes.jsonl` with cross-process file locks).
   - Works with real Excel desktop or browser live view without file locking conflicts.
-  - **Cloud/Vercel Ready**: Automatically boots from `/tmp/shared/` in read-only serverless environments.
+  - Durable only when the workbook and journal are on a persistent filesystem shared by all application processes.
 - **Frontend**: Pure Vanilla HTML5, modern CSS3 (Mobileum design system, sleek dark glassmorphism, responsive cards, micro-animations), and modular vanilla JavaScript.
 - **Localization**: Philippine Peso (`₱15,000.00` with 12% VAT) and E.164 +63 phone number normalizer supporting Mobile, Metro Manila Landlines, Provincial, and Toll-Free numbers.
 
@@ -95,7 +95,7 @@ git push -u origin main
 
 ## ☁️ Deploying to Vercel
 
-The project is pre-configured with `vercel.json` and `api/index.js` for zero-configuration deployment on Vercel.
+The project includes `vercel.json` and `api/index.js` for Vercel routing, but the Excel workbook is not a durable Vercel database.
 
 ### Method 1: Import via Vercel Dashboard (Recommended)
 1. Go to [vercel.com](https://vercel.com) and log in with your GitHub account.
@@ -119,10 +119,10 @@ Follow the interactive prompts and select default settings. For production:
 vercel --prod
 ```
 
-### How Vercel Deployment Works Under the Hood
-- **Static Assets**: All portal pages (`/`, `/operator`, `/enterprise`, `/customer`, `/shared/*`) are served directly from Vercel's global CDN Edge for instant page loads.
-- **Serverless API**: All API calls (`/api/*`) are handled by `api/index.js` running Express.
-- **Serverless Storage**: On Vercel, the read-only file system restriction is handled automatically by copying the bundled `CallerID-Database.xlsx` template and sample logos to `/tmp/shared/` on cold start, flushing transactions synchronously without `EROFS` errors.
+### Persistence requirements for Vercel
+- **Static Assets**: Portal pages can be served through Vercel's CDN.
+- **Serverless API**: API calls are handled by `api/index.js` running Express.
+- **Data storage**: Vercel's `/tmp` directory is ephemeral and isolated between serverless instances. Copying the workbook there only creates a temporary working copy; it does not preserve changes across cold starts or instances. Do not use this deployment for persistent customer data. A production Vercel deployment requires replacing the file store with a durable shared database or object-storage solution and configuring its credentials. Until that adapter is implemented, run the app on a host with a persistent shared filesystem (or use local mode).
 
 ---
 

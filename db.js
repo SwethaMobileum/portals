@@ -85,7 +85,7 @@ function initStorage() {
       }
     }
   } catch (e) {
-    console.error('Storage initialization notice:', e.message);
+    console.error('Storage initialization failed:', e);
   }
 }
 initStorage();
@@ -132,12 +132,23 @@ async function withDbLock(fn) { await acquire(); try { return await fn(); } fina
 // ---------- journal ----------
 function readJournal() {
   if (!fs.existsSync(JOURNAL)) return [];
-  return fs.readFileSync(JOURNAL, 'utf8').split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean);
+  return fs.readFileSync(JOURNAL, 'utf8').split('\n').filter(Boolean).map((line, index) => {
+    try { return JSON.parse(line); }
+    catch (e) { throw new Error(`Invalid JSON in pending database journal at line ${index + 1}: ${e.message}`); }
+  });
 }
 async function enqueue(entry) {
-  await withDbLock(async () => fs.appendFileSync(JOURNAL, JSON.stringify(entry) + '\n'));
+  await withDbLock(async () => {
+    const fd = fs.openSync(JOURNAL, 'a');
+    try {
+      fs.writeSync(fd, JSON.stringify(entry) + '\n');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
   if (IS_VERCEL) {
-    await flush();
+    await flush(true);
   } else {
     scheduleFlush(150);
   }
@@ -174,6 +185,14 @@ async function loadWorkbookState() {
 }
 function applyToState(s, e) {
   if (e.t === 'pkg' && !s.packages.some(p => p.packageId === e.row.packageId)) s.packages.push({ ...e.row });
+  if (e.t === 'pkg-update') {
+    const p = s.packages.find(x => x.packageId === e.row.packageId);
+    if (p) Object.assign(p, e.row);
+  }
+  if (e.t === 'pkg-remove') {
+    const p = s.packages.find(x => x.packageId === e.packageId);
+    if (p) p.status = 'removed';
+  }
   if (e.t === 'req') {
     if (!s.requests.some(r => r.requestId === e.row.requestId)) s.requests.push({ ...e.row });
     if (e.file && !s.files.some(f => f.fileId === e.file.fileId)) s.files.push({ ...e.file });
@@ -262,6 +281,22 @@ const link = (cell, url) => { cell.value = { text: 'Open file', hyperlink: url }
 function applyToWorkbook(wb, e) {
   const P = ensureSheet(wb, 'Packages'), R = ensureSheet(wb, 'Requests'), N = ensureSheet(wb, 'Numbers'), F = ensureSheet(wb, 'Files');
   if (e.t === 'pkg' && !findRow(P, colIdx(P, 'packageId'), e.row.packageId)) newRow(P, 'Packages', e.row);
+  if (e.t === 'pkg-update') {
+    const rowNo = findRow(P, colIdx(P, 'packageId'), e.row.packageId);
+    if (rowNo) {
+      for (const k of COLS.Packages) {
+        if (k !== 'packageId' && e.row[k] !== undefined) {
+          const cell = P.getRow(rowNo).getCell(colIdx(P, k));
+          cell.value = e.row[k];
+          if (MONEY.has(k)) cell.numFmt = PESO_FMT;
+        }
+      }
+    }
+  }
+  if (e.t === 'pkg-remove') {
+    const rowNo = findRow(P, colIdx(P, 'packageId'), e.packageId);
+    if (rowNo) P.getRow(rowNo).getCell(colIdx(P, 'status')).value = 'removed';
+  }
   if (e.t === 'req') {
     if (!findRow(R, colIdx(R, 'requestId'), e.row.requestId)) {
       const n = newRow(R, 'Requests', e.row);
@@ -302,7 +337,7 @@ async function writeWorkbook(entries) {
 // ---------- flushing the journal into the workbook ----------
 let flushTimer = null, flushInfo = { lastFlush: null, error: null };
 function scheduleFlush(ms = 150) { clearTimeout(flushTimer); flushTimer = setTimeout(flush, ms); }
-async function flush() {
+async function flush(required = false) {
   try {
     await withDbLock(async () => {
       const entries = readJournal(); if (!entries.length) return;
@@ -313,7 +348,9 @@ async function flush() {
   } catch (e) {
     const locked = ['EBUSY', 'EPERM', 'EACCES'].includes(e.code);
     flushInfo.error = locked ? 'The Excel file is open in Excel (or locked).' : /zip|central directory/i.test(e.message) ? 'The database file is not a valid .xlsx workbook; it was left untouched.' : e.message;
+    console.error('Database flush failed:', e);
     scheduleFlush(locked ? 3000 : 15000);
+    if (required) throw e;
   }
 }
 function startBackground() {

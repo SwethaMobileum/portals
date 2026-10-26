@@ -117,6 +117,7 @@
 
         <div class="row">
           <button class="p" onclick="publish()" id="btnPublish">Publish Package</button>
+          <button type="button" class="btn sm" id="btnCancelPackageEdit" onclick="cancelPackageEdit()" style="display:none;">Cancel Edit</button>
         </div>
         <div id="pMsg" class="msg"></div>
       </div>
@@ -129,7 +130,6 @@
             <div class="hint">Manage available caller-ID packages. Removed packages are hidden from the Enterprise registration selector.</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <button class="btn sm" id="btnToggleDeletedPkgs" onclick="toggleDeletedPackages()">Show Removed Packages</button>
             <span class="badge approved" id="badge_pkg_count">0 active</span>
           </div>
         </div>
@@ -271,8 +271,8 @@
     let selectedReq = null;
     let knownRequestIds = new Set();
     let isFirstLoad = true;
-    let showDeletedPkgs = false;
     let showDeletedOpNums = false;
+    let editingPackageId = null;
 
     // Initialize Layout Shell
     const portalShell = setupPortalLayout({
@@ -294,7 +294,7 @@
       m.className = 'msg';
       const btn = $('btnPublish');
       const name = $('pName').value.trim();
-      const cap = parseInt($('pCap').value, 10);
+      const cap = Number($('pCap').value);
       const price = parseFloat($('pPrice').value || '0');
 
       if (!name) {
@@ -307,8 +307,9 @@
       btn.innerHTML = dotsLoader() + ' Publishing...';
 
       try {
-        const p = await api('/api/packages', {
-          method: 'POST',
+        const isEditing = !!editingPackageId;
+        const p = await api(isEditing ? '/api/packages/' + encodeURIComponent(editingPackageId) : '/api/packages', {
+          method: isEditing ? 'PUT' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name,
@@ -320,9 +321,9 @@
           })
         });
         m.className = 'msg good';
-        m.textContent = 'Published ' + p.name + ' at ' + peso(p.pricePHP) + ' / month';
-        $('pName').value = '';
-        showToast('Package Published', `${p.name} (Capacity: ${p.capacity}) is now live.`, 'success');
+        m.textContent = (isEditing ? 'Updated ' : 'Published ') + p.name + ' at ' + peso(p.pricePHP) + ' / month';
+        cancelPackageEdit();
+        showToast(isEditing ? 'Package Updated' : 'Package Published', `${p.name} (Capacity: ${p.capacity}) is now live.`, 'success');
         await load();
       } catch (e) {
         m.className = 'msg err';
@@ -330,8 +331,33 @@
         showToast('Error', e.message, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Publish Package';
+        btn.textContent = editingPackageId ? 'Save Changes' : 'Publish Package';
       }
+    }
+
+    function editPackage(pkgId) {
+      const p = allPackages.find(x => x.packageId === pkgId);
+      if (!p) return;
+      editingPackageId = pkgId;
+      $('pName').value = p.name;
+      $('pCap').value = p.capacity;
+      $('pPrice').value = p.pricePHP;
+      $('pBrand').checked = p.brand === true || p.brand === 'true';
+      $('pTag').checked = p.tagline === true || p.tagline === 'true';
+      $('pLogo').checked = p.logoIncluded === true || p.logoIncluded === 'true';
+      $('btnPublish').textContent = 'Save Changes';
+      $('btnCancelPackageEdit').style.display = 'inline-flex';
+      $('pMsg').className = 'msg';
+      $('pMsg').textContent = `Editing ${p.name}`;
+      feeHint();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function cancelPackageEdit() {
+      editingPackageId = null;
+      $('pName').value = '';
+      $('btnPublish').textContent = 'Publish Package';
+      $('btnCancelPackageEdit').style.display = 'none';
     }
 
     // Remove Package (Removes from Operator & Enterprise selector)
@@ -343,28 +369,16 @@
         message: `Are you sure you want to remove package "${pkgName}"? It will be hidden from the active package list and Enterprise registration plan options.`,
         confirmText: 'Remove Package',
         confirmClass: 'no',
-        onConfirm: () => {
-          addToSharedList('deleted_packages', pkgId);
-          showToast('Package Removed', `Package "${pkgName}" has been removed.`, 'info');
-          renderPackagesTable();
-          updateStatCounts();
+        onConfirm: async () => {
+          try {
+            await api('/api/packages/' + encodeURIComponent(pkgId), { method: 'DELETE' });
+            showToast('Package Removed', `Package "${pkgName}" was removed from both portals.`, 'info');
+            await load();
+          } catch (e) {
+            showToast('Error', e.message, 'error');
+          }
         }
       });
-    }
-
-    // Restore Package
-    function restorePackage(pkgId) {
-      removeFromSharedList('deleted_packages', pkgId);
-      showToast('Package Restored', 'Package restored to active list.', 'success');
-      renderPackagesTable();
-      updateStatCounts();
-    }
-
-    function toggleDeletedPackages() {
-      showDeletedPkgs = !showDeletedPkgs;
-      const btn = $('btnToggleDeletedPkgs');
-      if (btn) btn.textContent = showDeletedPkgs ? 'Show Active Packages' : 'Show Removed Packages';
-      renderPackagesTable();
     }
 
     // Remove Request (Image 3)
@@ -668,22 +682,16 @@
 
     // Render Packages Table with Remove Option (Image 2 packages management)
     function renderPackagesTable() {
-      const deletedPkgs = getSharedList('deleted_packages');
-      let displayPkgs = allPackages;
-      if (showDeletedPkgs) {
-        displayPkgs = allPackages.filter(p => deletedPkgs.includes(p.packageId));
-      } else {
-        displayPkgs = allPackages.filter(p => !deletedPkgs.includes(p.packageId));
-      }
+      const displayPkgs = allPackages;
 
-      $('badge_pkg_count').textContent = allPackages.filter(p => !deletedPkgs.includes(p.packageId)).length + ' active';
+      $('badge_pkg_count').textContent = allPackages.length + ' active';
 
       if (!displayPkgs.length) {
         $('pkgs').innerHTML = `
           <div class="empty-state">
             <div class="empty-state-icon">📦</div>
-            <div class="empty-state-title">${showDeletedPkgs ? 'No removed packages' : 'No published packages'}</div>
-            <div class="empty-state-desc">${showDeletedPkgs ? 'No packages currently in removed list.' : 'Create your first package above to allow enterprises to register numbers.'}</div>
+            <div class="empty-state-title">No published packages</div>
+            <div class="empty-state-desc">Create your first package above to allow enterprises to register numbers.</div>
           </div>
         `;
         return;
@@ -703,7 +711,6 @@
           </thead>
           <tbody>
             ${displayPkgs.map(p => {
-              const isDel = deletedPkgs.includes(p.packageId);
               return `
                 <tr>
                   <td><strong>${esc(p.name)}</strong></td>
@@ -717,13 +724,10 @@
                     ${p.tagline ? '<span class="chip" style="font-size:10.5px;">Tagline</span>' : ''}
                     ${p.logoIncluded ? '<span class="chip" style="font-size:10.5px;">Logo</span>' : ''}
                   </td>
-                  <td><span class="badge ${isDel ? 'rejected' : 'approved'}">${isDel ? 'Removed' : esc(p.status)}</span></td>
+                  <td><span class="badge approved">${esc(p.status)}</span></td>
                   <td>
-                    ${isDel ? `
-                      <button class="btn sm ok" onclick="restorePackage('${esc(p.packageId)}')">Restore</button>
-                    ` : `
-                      <button class="btn sm no" onclick="removePackage('${esc(p.packageId)}')">Remove</button>
-                    `}
+                    <button class="btn sm" onclick="editPackage('${esc(p.packageId)}')">Edit</button>
+                    <button class="btn sm no" onclick="removePackage('${esc(p.packageId)}')">Remove</button>
                   </td>
                 </tr>
               `;
@@ -864,11 +868,10 @@
 
     function updateStatCounts() {
       const deletedReqs = getSharedList('deleted_requests');
-      const deletedPkgs = getSharedList('deleted_packages');
       const deletedNums = getSharedList('deleted_numbers');
 
       const activeReqs = allRequests.filter(r => !deletedReqs.includes(r.requestId));
-      const activePkgs = allPackages.filter(p => !deletedPkgs.includes(p.packageId));
+      const activePkgs = allPackages;
       const activeNums = allNumbers.filter(n => !deletedNums.includes(n.phoneE164));
 
       const pendingCount = activeReqs.filter(r => r.status === 'pending').length;
@@ -912,6 +915,7 @@
         $('lCu').href = info.customerUrl;
         dbStatus($('dbstat'), info);
 
+        await migrateLegacyPackageRemovals();
         const [pk, rq, numRes] = await Promise.all([
           api('/api/packages'),
           api('/api/requests'),

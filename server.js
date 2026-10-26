@@ -114,7 +114,8 @@ app.get('/api/info', (req, res) => {
 app.get('/api/packages', wrap(async (req, res) => {
   const s = await db.readAll();
   const isEnterprise = ROLE === 'enterprise' || req.query.role === 'enterprise' || (req.headers.referer && req.headers.referer.includes('/enterprise'));
-  res.json(isEnterprise ? s.packages.filter(p => p.status === 'published') : s.packages);
+  res.set('Cache-Control', 'no-store');
+  res.json(s.packages.filter(p => p.status !== 'removed' && (!isEnterprise || p.status === 'published')));
 }));
 app.get('/api/requests', only('operator', 'enterprise'), wrap(async (_req, res) => res.json(decorate(await db.readAll()))));
 // registered numbers (the customer phone uses this to offer demo callers) and the caller-ID lookup
@@ -127,11 +128,53 @@ app.get('/api/lookup', wrap(async (req, res) => res.json(lookup(await db.readAll
 // OPERATOR: publish a package
 app.post('/api/packages', only('operator'), wrap(async (req, res) => {
   const { name, capacity, pricePHP = 0, brand = true, tagline = false, logoIncluded = false } = req.body || {};
-  if (!name || !Number.isInteger(capacity) || capacity <= 0) return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
+  if (typeof name !== 'string' || !name.trim() || !Number.isInteger(capacity) || capacity <= 0) return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
   if (typeof pricePHP !== 'number' || !isFinite(pricePHP) || pricePHP < 0) return res.status(400).json({ error: 'price must be an amount in Philippine pesos (₱), 0 or more' });
-  const row = { packageId: db.newId('PKG'), name, capacity, pricePHP: PH.round2(pricePHP), brand: !!brand, tagline: !!tagline, logoIncluded: !!logoIncluded, status: 'published', createdAt: new Date().toISOString() };
+  const row = { packageId: db.newId('PKG'), name: name.trim().slice(0, 80), capacity, pricePHP: PH.round2(pricePHP), brand: !!brand, tagline: !!tagline, logoIncluded: !!logoIncluded, status: 'published', createdAt: new Date().toISOString() };
   await db.enqueue({ t: 'pkg', row });
   res.status(201).json(row);
+}));
+
+async function updatePackage(req, res) {
+  const s = await db.readAll();
+  const current = s.packages.find(p => p.packageId === req.params.id && p.status !== 'removed');
+  if (!current) return res.status(404).json({ error: 'package not found' });
+
+  const body = req.body || {};
+  const name = body.name === undefined ? current.name : (typeof body.name === 'string' ? body.name.trim() : '');
+  const capacity = body.capacity === undefined ? Number(current.capacity) : body.capacity;
+  const pricePHP = body.pricePHP === undefined ? Number(current.pricePHP) : body.pricePHP;
+  if (typeof name !== 'string' || !name || !Number.isInteger(capacity) || capacity <= 0) {
+    return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
+  }
+  if (typeof pricePHP !== 'number' || !isFinite(pricePHP) || pricePHP < 0) {
+    return res.status(400).json({ error: 'price must be an amount in Philippine pesos (₱), 0 or more' });
+  }
+
+  const row = {
+    ...current,
+    name: name.slice(0, 80),
+    capacity,
+    pricePHP: PH.round2(pricePHP),
+    brand: body.brand === undefined ? truthy(current.brand) : !!body.brand,
+    tagline: body.tagline === undefined ? truthy(current.tagline) : !!body.tagline,
+    logoIncluded: body.logoIncluded === undefined ? truthy(current.logoIncluded) : !!body.logoIncluded
+  };
+  await db.enqueue({ t: 'pkg-update', row });
+  res.json(row);
+}
+
+app.put('/api/packages/:id', only('operator'), wrap(updatePackage));
+app.patch('/api/packages/:id', only('operator'), wrap(updatePackage));
+
+// Keep historical references valid while persistently removing plans from both portals.
+app.delete('/api/packages/:id', only('operator', 'enterprise'), wrap(async (req, res) => {
+  const s = await db.readAll();
+  const pkg = s.packages.find(p => p.packageId === req.params.id);
+  if (!pkg) return res.status(404).json({ error: 'package not found' });
+  if (pkg.status === 'removed') return res.json({ packageId: pkg.packageId, status: 'removed' });
+  await db.enqueue({ t: 'pkg-remove', packageId: pkg.packageId });
+  res.json({ packageId: pkg.packageId, status: 'removed' });
 }));
 
 // OPERATOR: approve / reject
