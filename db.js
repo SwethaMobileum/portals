@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const mongoStore = require('./mongo-store');
 
 const IS_VERCEL = !!process.env.VERCEL;
-const USE_MONGO = IS_VERCEL || mongoStore.configured();
+const USE_MONGO = mongoStore.configured();
 let mongoInitialization;
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')); } catch (e) {}
@@ -158,6 +158,30 @@ function initStorage() {
       }
     });
 
+    // On Vercel or isolated temp directories, seed database.json and CallerID-Database.xlsx from bundled shared folder
+    if (IS_VERCEL) {
+      const seedJson = path.join(__dirname, 'shared', 'database.json');
+      if (fs.existsSync(seedJson) && !fs.existsSync(JSON_DB)) {
+        try { fs.copyFileSync(seedJson, JSON_DB); } catch (e) {}
+      }
+      const seedDb = path.join(__dirname, 'shared', 'CallerID-Database.xlsx');
+      if (fs.existsSync(seedDb) && !fs.existsSync(DB_PATH)) {
+        try { fs.copyFileSync(seedDb, DB_PATH); } catch (e) {}
+      }
+      const seedStorage = path.join(__dirname, 'shared', 'storage', 'logos');
+      if (fs.existsSync(seedStorage)) {
+        try {
+          const files = fs.readdirSync(seedStorage);
+          files.forEach(f => {
+            const dest = path.join(STORAGE_DIR, f);
+            if (!fs.existsSync(dest)) {
+              try { fs.copyFileSync(path.join(seedStorage, f), dest); } catch (e) {}
+            }
+          });
+        } catch (e) {}
+      }
+    }
+
     // Initialize or load state from JSON_DB
     if (fs.existsSync(JSON_DB)) {
       try {
@@ -172,7 +196,6 @@ function initStorage() {
 
     if (!memoryState || !memoryState.packages) {
       if (fs.existsSync(DB_PATH)) {
-        // Asynchronous init will populate when ready, or fall back to empty
         memoryState = EMPTY();
       } else {
         const seedDb = path.join(__dirname, 'shared', 'CallerID-Database.xlsx');
