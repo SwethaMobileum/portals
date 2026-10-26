@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mobileum &middot; Live Excel Database Sheet</title>
+  <link rel="stylesheet" href="/shared/common.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #F8FAFD;
+      font-family: var(--font-family);
+    }
+    .sheet-app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .sheet-top {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: #FFFFFF;
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-xs);
+    }
+    .sheet-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sheet-title img {
+      width: 26px;
+      height: 26px;
+      object-fit: contain;
+    }
+    .sheet-title b {
+      font-size: 15px;
+      color: var(--deep-navy);
+    }
+    .sheet-wrap {
+      flex: 1;
+      overflow: auto;
+      background: #FFFFFF;
+    }
+    table.sheet-table {
+      border-collapse: collapse;
+      min-width: 100%;
+      font-size: 12.5px;
+    }
+    table.sheet-table th, table.sheet-table td {
+      border: 1px solid #E2E8F0;
+      padding: 6px 12px;
+      white-space: nowrap;
+      text-align: left;
+      vertical-align: middle;
+      max-width: 380px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    table.sheet-table th {
+      background: #F1F5F9;
+      position: sticky;
+      top: 0;
+      font-weight: 600;
+      color: var(--text-muted);
+      z-index: 5;
+    }
+    table.sheet-table th.l, table.sheet-table td.n {
+      background: #F8FAFC;
+      color: #94A3B8;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      position: sticky;
+      left: 0;
+      width: 44px;
+      min-width: 44px;
+      z-index: 6;
+    }
+    table.sheet-table th.l {
+      z-index: 10;
+    }
+    tr.header-row td:not(.n) {
+      font-weight: 700;
+      background: #F8FAFC;
+      color: var(--deep-navy);
+    }
+    .sheet-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 6px 16px 0;
+      border-top: 1px solid var(--border);
+      background: #EDF2F7;
+      box-shadow: 0 -2px 6px rgba(0,0,0,0.02);
+    }
+    .sheet-tab {
+      padding: 8px 18px;
+      border: 1px solid #CBD5E1;
+      border-bottom: 0;
+      background: #F8FAFC;
+      cursor: pointer;
+      border-radius: 6px 6px 0 0;
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 12.5px;
+      transition: all var(--trans-fast);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sheet-tab:hover {
+      background: #FFFFFF;
+      color: var(--deep-navy);
+    }
+    .sheet-tab.on {
+      background: #FFFFFF;
+      color: var(--primary-blue);
+      font-weight: 700;
+      border-top: 2.5px solid var(--primary-blue);
+      border-color: #CBD5E1 #CBD5E1 #FFFFFF;
+    }
+    img.thumb-preview {
+      height: 38px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      display: block;
+      object-fit: contain;
+    }
+    td.new {
+      animation: cellFlash 2s ease-out;
+    }
+    @keyframes cellFlash {
+      from { background-color: #FEF3C7; }
+      to { background-color: transparent; }
+    }
+  </style>
+</head>
+<body>
+  <div class="sheet-app">
+    <div class="sheet-top">
+      <div class="sheet-title">
+        <img src="/shared/assets/mobileum-logo.png" alt="Mobileum">
+        <div>
+          <b>Live Excel Database Sheet</b>
+          <span class="hint" style="margin-left:8px;"><code>CallerID-Database.xlsx</code></span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div id="st" class="live-indicator">
+          <span class="pulse-dot"></span>
+          <span>Connecting...</span>
+        </div>
+        <a href="/api/database" class="btn sm" download>Download Excel File (.xlsx) &darr;</a>
+      </div>
+    </div>
+
+    <div class="sheet-wrap">
+      <table id="grid" class="sheet-table"></table>
+    </div>
+
+    <div class="sheet-tabs" id="tabs"></div>
+  </div>
+
+  <script src="/shared/common.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script>
+    const COLS = {
+      Packages: ['packageId', 'name', 'capacity', 'pricePHP', 'brand', 'tagline', 'logoIncluded', 'status', 'createdAt'],
+      Requests: ['requestId', 'packageId', 'brandName', 'tagline', 'status', 'logoFileId', 'createdAt', 'departments', 'numbersCount', 'monthlyFeePHP', 'vatPHP', 'totalPHP', 'logoLink', 'preview'],
+      Numbers: ['numberId', 'requestId', 'brandName', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'status', 'createdAt'],
+      Files: ['fileId', 'requestId', 'originalName', 'storedName', 'storagePath', 'url', 'mimeType', 'sizeBytes', 'sha256', 'uploadedBy', 'uploadedAt', 'preview']
+    };
+    const KEY = { Packages: 'packages', Requests: 'requests', Numbers: 'numbers', Files: 'files' };
+    const MONEY = new Set(['pricePHP', 'monthlyFeePHP', 'vatPHP', 'totalPHP']);
+
+    const L = n => {
+      let s = ''; n++;
+      while (n > 0) {
+        const m = (n - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        n = Math.floor((n - 1) / 26);
+      }
+      return s;
+    };
+
+    let tab = (() => {
+      try { return localStorage.getItem('sheet_tab'); } catch (e) { return null; }
+    })() || 'Requests';
+    let data = null, prev = {};
+
+    function cell(t, r, k) {
+      if (t === 'Requests' && k === 'logoLink') {
+        return r.logoUrl ? `<a href="${esc(r.logoUrl)}" target="_blank" class="btn sm" style="padding:2px 8px;font-size:11px;">Open file &nearr;</a>` : '';
+      }
+      if (t === 'Requests' && k === 'preview') {
+        return r.previewable && (r.mimeType || '').startsWith('image/')
+          ? `<img class="thumb-preview" src="${esc(r.logoUrl)}" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">`
+          : (r.logoUrl ? '<span class="hint">Click "Open file"</span>' : '<span class="hint">No logo</span>');
+      }
+      if (t === 'Files' && k === 'url') {
+        return `<a href="${esc(r.url)}" target="_blank" class="btn sm" style="padding:2px 8px;font-size:11px;">Open file &nearr;</a>`;
+      }
+      if (t === 'Files' && k === 'preview') {
+        const ok = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/svg+xml', 'image/avif', 'image/x-icon'].includes(r.mimeType);
+        return ok ? `<img class="thumb-preview" src="/api/files/${esc(r.fileId)}" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">` : '<span class="hint">Click "Open file"</span>';
+      }
+      if (MONEY.has(k)) {
+        return `<span class="peso font-weight:600;">${esc(peso(r[k]))}</span>`;
+      }
+      if (k === 'status') {
+        return `<span class="badge ${esc(r[k])}">${esc(r[k])}</span>`;
+      }
+      return esc(r[k]);
+    }
+
+    function render() {
+      if (!data) return;
+      const cols = COLS[tab], rows = data[KEY[tab]] || [];
+      let h = '<tr><th class="l"></th>' + cols.map((c, i) => `<th>${L(i)}</th>`).join('') + '</tr>' +
+              '<tr class="header-row"><td class="n">1</td>' + cols.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>';
+      
+      rows.forEach((r, i) => {
+        h += `<tr><td class="n">${i + 2}</td>` + cols.map(k => {
+          const v = cell(tab, r, k);
+          const id = tab + i + k + '|' + (r[k] ?? '');
+          const nw = prev[tab] && !prev[tab].has(id) ? ' new' : '';
+          return `<td class="${nw.trim()}">${v}</td>`;
+        }).join('') + '</tr>';
+      });
+
+      $('grid').innerHTML = h;
+      prev[tab] = new Set(rows.flatMap((r, i) => cols.map(k => tab + i + k + '|' + (r[k] ?? ''))));
+      
+      $('tabs').innerHTML = Object.keys(COLS).map(t => `
+        <div class="sheet-tab ${t === tab ? 'on' : ''}" onclick="go('${t}')">
+          <span>${t}</span>
+          <span class="badge" style="background:rgba(0,0,0,0.06);font-size:10px;padding:1px 6px;">${(data[KEY[t]] || []).length}</span>
+        </div>
+      `).join('');
+    }
+
+    function go(t) {
+      tab = t;
+      try { localStorage.setItem('sheet_tab', t); } catch (e) {}
+      render();
+    }
+
+    async function tick() {
+      try {
+        const d = await (await fetch('/api/sheet')).json();
+        const sig = JSON.stringify(d.packages) + JSON.stringify(d.requests) + JSON.stringify(d.numbers) + JSON.stringify(d.files);
+        if (sig !== tick.sig) {
+          tick.sig = sig;
+          data = d;
+          render();
+        } else if (!data) {
+          data = d;
+          render();
+        }
+        const s = d.status || {};
+        const stEl = $('st');
+        if (s.pending > 0) {
+          stEl.className = 'live-indicator';
+          stEl.style.color = '#D97706';
+          stEl.style.background = '#FEF3C7';
+          stEl.style.borderColor = '#FDE68A';
+          stEl.innerHTML = `<span class="pulse-dot" style="background:#D97706;"></span><span>${s.pending} pending save to Excel</span>`;
+        } else {
+          stEl.className = 'live-indicator';
+          stEl.style.color = '';
+          stEl.style.background = '';
+          stEl.style.borderColor = '';
+          stEl.innerHTML = `<span class="pulse-dot"></span><span>Live &middot; Synced with Excel</span>` +
+            (s.lastFlush ? ` <span class="hint" style="color:inherit;opacity:0.75;">(${new Date(s.lastFlush).toLocaleTimeString()})</span>` : '');
+        }
+      } catch (e) {
+        $('st').className = 'live-indicator';
+        $('st').style.color = '#DC2626';
+        $('st').style.background = '#FDE8E8';
+        $('st').innerHTML = `<span>✕ Cannot reach server</span>`;
+      }
+    }
+
+    tick();
+    setInterval(tick, 2000);
+  </script>
+</body>
+</html>

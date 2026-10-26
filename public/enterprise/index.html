@@ -1,0 +1,1187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mobileum Caller ID &middot; Enterprise Portal</title>
+  <link rel="stylesheet" href="/shared/common.css">
+  <style>
+    .step-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .step-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--primary-blue);
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+    }
+    .step-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--deep-navy);
+      margin: 0;
+    }
+    .preset-chip-btn {
+      padding: 4px 10px;
+      border-radius: var(--radius-full);
+      font-size: 11.5px;
+      font-weight: 600;
+      background: #F0F4FF;
+      color: var(--primary-blue);
+      border: 1px solid #D6E0FF;
+      cursor: pointer;
+      transition: all var(--trans-fast);
+    }
+    .preset-chip-btn:hover {
+      background: var(--primary-blue);
+      color: #FFFFFF;
+      border-color: var(--primary-blue);
+    }
+    .collapsible-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 16px;
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+      transition: box-shadow var(--trans-fast);
+    }
+    .collapsible-card:hover {
+      box-shadow: var(--shadow-md);
+    }
+    .collapsible-header {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      background: #FFFFFF;
+      user-select: none;
+      transition: background var(--trans-fast);
+    }
+    .collapsible-header:hover {
+      background: #F8FAFD;
+    }
+    .collapsible-body {
+      padding: 0 20px 20px;
+      border-top: 1px solid var(--border-subtle);
+      display: none;
+    }
+    .collapsible-card.open .collapsible-body {
+      display: block;
+      padding-top: 18px;
+    }
+    .collapsible-chevron {
+      transition: transform var(--trans-fast);
+      color: var(--text-muted);
+    }
+    .collapsible-card.open .collapsible-chevron {
+      transform: rotate(180deg);
+    }
+    .banner-notification {
+      padding: 14px 18px;
+      border-radius: var(--radius-md);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      animation: bannerSlide 0.3s ease-out;
+    }
+    @keyframes bannerSlide {
+      from { transform: translateY(-10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Hidden legacy header links for backward compatibility -->
+  <div style="display:none;">
+    <a id="lOp" target="_blank"></a>
+    <a id="lCu" target="_blank"></a>
+  </div>
+
+  <div class="bar">
+    <div id="dbstat" class="dbstat">Loading Excel database status...</div>
+  </div>
+
+  <!-- Real-time Status Change Banner Container -->
+  <div id="statusBanners"></div>
+
+  <!-- =======================================================================
+       TAB 1: REGISTER
+       ======================================================================= -->
+  <div data-tab-panel="register">
+    <!-- Multi-step Visual Header -->
+    <!-- Multi-step Visual Header -->
+    <nav class="stepper" aria-label="Registration Steps">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button type="button" class="step-item active" id="step_indicator_1" onclick="goToStep(1)">
+          <span class="step-number">1</span>
+          <span>Choose Package</span>
+        </button>
+        <span class="step-arrow">&rarr;</span>
+        <button type="button" class="step-item" id="step_indicator_2" onclick="goToStep(2)">
+          <span class="step-number">2</span>
+          <span>Brand Identity</span>
+        </button>
+        <span class="step-arrow">&rarr;</span>
+        <button type="button" class="step-item" id="step_indicator_3" onclick="goToStep(3)">
+          <span class="step-number">3</span>
+          <span>Departments & Numbers</span>
+        </button>
+      </div>
+      <div>
+        <button type="button" class="btn sm" id="btnToggleStepMode" onclick="toggleStepViewMode()" title="Toggle between step-by-step wizard and all-in-one view" style="font-size:11.5px;padding:4px 10px;background:#FFFFFF;border-color:var(--border);color:var(--text-secondary);">
+          View All Steps
+        </button>
+      </div>
+    </nav>
+
+    <!-- Step 1: Package Selection (Image 2) -->
+    <div class="step-card" id="step_card_1">
+      <div class="step-header">
+        <span class="step-badge">1</span>
+        <div>
+          <h2 class="step-title">Select Caller ID Package</h2>
+          <div class="hint">Choose an operator package with the number capacity suitable for your enterprise.</div>
+        </div>
+      </div>
+      
+      <div class="form-group" style="max-width:650px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <label for="pkg" style="margin:0;">Select Plan <span class="req-star">*</span></label>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn sm" id="btnRestorePlans" onclick="restorePlans()" style="display:none;padding:2px 8px;font-size:11px;">Restore Plans</button>
+            <button type="button" class="btn sm no" onclick="removeSelectedPlan()" style="padding:2px 10px;font-size:11.5px;" title="Remove this plan from selection list">✕ Remove Plan</button>
+          </div>
+        </div>
+        <select id="pkg" onchange="summary()"></select>
+        <div id="pkgInfo" class="hint" style="margin-top:6px;"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:20px;padding-top:14px;border-top:1px solid var(--border-subtle);">
+          <button type="button" class="btn p sm" onclick="nextToStep2()">Next: Brand Identity &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Brand Identity -->
+    <div class="step-card" id="step_card_2" style="display:none;">
+      <div class="step-header">
+        <span class="step-badge">2</span>
+        <div>
+          <h2 class="step-title">Enterprise Brand Identity</h2>
+          <div class="hint">One official name, tagline, and verified logo per enterprise registration.</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <div class="form-group">
+            <label for="brand">Official Bank / Business Name <span class="req-star">*</span></label>
+            <input id="brand" maxlength="80" placeholder="e.g. Bank of the Philippine Islands" oninput="validateForm()">
+            <div id="brandErr" class="field-error" style="display:none;">Official enterprise name is required</div>
+          </div>
+
+          <div class="form-group">
+            <label for="tag">Official Tagline <span class="hint" style="display:inline;font-weight:normal;">(optional)</span></label>
+            <input id="tag" maxlength="120" placeholder="e.g. Ready Today. Ready Tomorrow.">
+            <div class="hint" style="margin-top:4px;">Appears beneath the verified caller badge on customer screens.</div>
+          </div>
+        </div>
+
+        <div>
+          <div class="form-group">
+            <label for="logo">Corporate Logo (PNG, JPG, SVG, WebP, PDF) <span class="hint" style="display:inline;font-weight:normal;">(optional)</span></label>
+            <input id="logo" type="file" accept="image/*,.pdf" onchange="previewLogoFile(this)">
+            <div class="hint" style="margin-top:4px;">High resolution transparent PNG or SVG recommended.</div>
+          </div>
+
+          <div id="logoPreviewBox" style="display:none;margin-top:12px;padding:12px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-md);align-items:center;gap:14px;">
+            <div style="width:52px;height:52px;border-radius:var(--radius-sm);background:#FFFFFF;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex:none;">
+              <img id="logoPreviewImg" src="" alt="Logo Preview" style="max-width:100%;max-height:100%;object-fit:contain;">
+            </div>
+            <div>
+              <div style="font-weight:600;font-size:12.5px;color:var(--deep-navy);" id="logoPreviewName">logo.png</div>
+              <div class="hint" id="logoPreviewSize">Ready for upload</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding-top:14px;border-top:1px solid var(--border-subtle);">
+        <button type="button" class="btn sm" onclick="goToStep(1)">&larr; Back to Package</button>
+        <button type="button" class="btn p sm" onclick="nextToStep3()">Next: Departments & Numbers &rarr;</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Departments and Numbers -->
+    <div class="step-card" id="step_card_3" style="display:none;">
+      <div class="step-header" style="justify-content:space-between;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="step-badge">3</span>
+          <div>
+            <h2 class="step-title">Departments & Authorized Phone Numbers (+63)</h2>
+            <div class="hint">Every department must have a mandatory name. Enter one number per line.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+          <button class="btn sm" onclick="sample()">Fill Sample Numbers</button>
+          <button class="btn p sm" onclick="addDep()">+ Add Department</button>
+        </div>
+      </div>
+
+      <!-- Department Preset Suggestions -->
+      <div style="margin-bottom:16px;padding:12px 16px;background:#F8FAFD;border-radius:var(--radius-md);border:1px solid var(--border);">
+        <div style="font-size:11.5px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">QUICK PRESET SUGGESTIONS:</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <span class="hint" style="font-weight:600;color:var(--deep-navy);">Banking:</span>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Customer Service')">+ Customer Service</button>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Collections')">+ Collections</button>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Credit Cards')">+ Credit Cards</button>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Fraud & Security')">+ Fraud & Security</button>
+          <span style="color:var(--border);margin:0 4px;">|</span>
+          <span class="hint" style="font-weight:600;color:var(--deep-navy);">Retail & Food:</span>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Delivery')">+ Delivery</button>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Service Centre')">+ Service Centre</button>
+          <button type="button" class="preset-chip-btn" onclick="applyPresetDept('Marketing')">+ Marketing</button>
+        </div>
+      </div>
+
+      <!-- Departments List Container -->
+      <div id="deps"></div>
+      <datalist id="presets"></datalist>
+
+      <!-- Live Summary & Fee Calculation -->
+      <div id="sumry" class="dbstat" style="margin-top:16px;background:#F8FAFD;"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid var(--border-subtle);">
+        <button type="button" class="btn sm" onclick="goToStep(2)">&larr; Back to Brand Identity</button>
+        <button class="btn p" onclick="submitReq()" id="btnSubmit" style="padding:10px 24px;font-size:14px;font-weight:600;">
+          Submit Registration for Approval &rarr;
+        </button>
+      </div>
+
+      <div id="msg" class="msg"></div>
+    </div>
+  </div>
+
+  <!-- =======================================================================
+       TAB 2: MY REGISTRATIONS
+       ======================================================================= -->
+  <div data-tab-panel="registrations" style="display:none;">
+    <div class="card" style="margin-bottom:20px;">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Registration Applications & Status Tracker</h2>
+          <div class="hint">Real-time status of your enterprise submissions. Caller ID goes live once approved by the operator.</div>
+        </div>
+        <button class="btn sm" onclick="load()">↻ Refresh</button>
+      </div>
+
+      <div id="reqs">
+        <div class="empty-state">Loading registrations...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =======================================================================
+       TAB 3: MY NUMBERS (Image 1)
+       ======================================================================= -->
+  <div data-tab-panel="numbers" style="display:none;">
+    <div class="card">
+      <div class="card-header" style="flex-wrap:wrap;gap:12px;">
+        <div>
+          <h2 class="card-title">My Registered Phone Numbers</h2>
+          <div class="hint">Overview of all active, pending, and approved caller ID numbers registered for your organization.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="btn sm" id="btnToggleDeletedMyNums" onclick="toggleDeletedMyNumbers()">Show Removed Numbers</button>
+          <div style="width:240px;">
+            <input type="text" id="myNumSearch" placeholder="Search my numbers..." oninput="renderMyNumbersTable()">
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Phone Number (+63)</th>
+              <th>Type</th>
+              <th>Department</th>
+              <th>Enterprise Brand</th>
+              <th>Caller ID Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="myNumbersTableBody">
+            <tr><td colspan="6" class="empty-state">Loading numbers...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/shared/common.js"></script>
+  <script src="/shared/ph.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script>
+    let pkgs = [];
+    let deps = [];
+    let seq = 0;
+    let myRequests = [];
+    let prevStatuses = new Map(); // requestId -> status
+    let isInitialLoad = true;
+    let showDeletedMyNums = false;
+
+    const DEFAULTS = ['Customer Service', 'Collections', 'Credit Cards', 'Fraud & Security'];
+    const SAMPLE = [
+      '+63 917 123 4567\n0917 123 4568',
+      '(02) 8123 4567',
+      '0918-555-0101',
+      '1800-10-123-4567'
+    ];
+
+    // Initialize layout shell
+    const portalShell = setupPortalLayout({
+      portalName: 'Mobileum Enterprise Portal',
+      portalRole: 'enterprise',
+      tabs: [
+        { id: 'register', label: 'Register', icon: 'register' },
+        { id: 'registrations', label: 'My Registrations', icon: 'requests', badgeId: 'nav_badge_regs' },
+        { id: 'numbers', label: 'My Numbers', icon: 'numbers' }
+      ],
+      defaultTab: 'register'
+    });
+
+    // Multi-step Registration Wizard
+    let currentStep = 1;
+    let stepViewMode = 'wizard'; // 'wizard' (step-by-step) | 'all' (all on one page)
+    let scrollSpyObserver = null;
+
+    function goToStep(stepNum) {
+      if (stepNum < 1 || stepNum > 3) return;
+      currentStep = stepNum;
+
+      // Update stepper indicators (1, 2, 3)
+      for (let i = 1; i <= 3; i++) {
+        const ind = $('step_indicator_' + i);
+        const card = $('step_card_' + i);
+        if (ind) {
+          ind.classList.toggle('active', i === stepNum);
+          ind.classList.toggle('completed', i < stepNum);
+          const numSpan = ind.querySelector('.step-number');
+          if (numSpan) {
+            numSpan.textContent = (i < stepNum) ? '✓' : String(i);
+          }
+        }
+        if (card) {
+          if (stepViewMode === 'wizard') {
+            card.style.display = (i === stepNum) ? 'block' : 'none';
+          } else {
+            card.style.display = 'block';
+          }
+        }
+      }
+
+      const activeCard = $('step_card_' + stepNum);
+      if (activeCard) {
+        if (stepViewMode === 'all') {
+          activeCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        const input = activeCard.querySelector('input:not([type="hidden"]), select, textarea');
+        if (input) {
+          setTimeout(() => {
+            try { input.focus({ preventScroll: true }); } catch (e) {}
+          }, 150);
+        }
+      }
+    }
+
+    function nextToStep2() {
+      goToStep(2);
+    }
+
+    function nextToStep3() {
+      const brandVal = $('brand').value.trim();
+      if (!brandVal) {
+        $('brandErr').style.display = 'flex';
+        $('brand').classList.add('input-error');
+        $('brand').focus();
+        showToast('Brand Name Required', 'Please enter your official bank or business name before proceeding.', 'warning');
+        return;
+      }
+      goToStep(3);
+    }
+
+    function toggleStepViewMode() {
+      stepViewMode = (stepViewMode === 'wizard') ? 'all' : 'wizard';
+      const btn = $('btnToggleStepMode');
+      if (btn) {
+        btn.textContent = (stepViewMode === 'wizard') ? 'View All Steps' : 'Step-by-Step Wizard';
+      }
+      goToStep(currentStep);
+      if (stepViewMode === 'all') {
+        setupScrollSpy();
+      } else if (scrollSpyObserver) {
+        scrollSpyObserver.disconnect();
+        scrollSpyObserver = null;
+      }
+    }
+
+    function setupScrollSpy() {
+      if (stepViewMode !== 'all') return;
+      if (scrollSpyObserver) scrollSpyObserver.disconnect();
+      const cards = [1, 2, 3].map(i => $('step_card_' + i)).filter(Boolean);
+      if (!cards.length) return;
+
+      scrollSpyObserver = new IntersectionObserver(entries => {
+        if (stepViewMode !== 'all') return;
+        let best = null;
+        let bestRatio = 0;
+        entries.forEach(entry => {
+          if (entry.isIntersecting && entry.intersectionRatio > bestRatio) {
+            bestRatio = entry.intersectionRatio;
+            best = entry.target;
+          }
+        });
+        if (best) {
+          const stepNum = parseInt(best.id.replace('step_card_', ''), 10);
+          if (stepNum && stepNum !== currentStep) {
+            currentStep = stepNum;
+            for (let i = 1; i <= 3; i++) {
+              const ind = $('step_indicator_' + i);
+              if (ind) {
+                ind.classList.toggle('active', i === stepNum);
+                ind.classList.toggle('completed', i < stepNum);
+                const numSpan = ind.querySelector('.step-number');
+                if (numSpan) numSpan.textContent = (i < stepNum) ? '✓' : String(i);
+              }
+            }
+          }
+        }
+      }, {
+        threshold: [0.2, 0.5, 0.8]
+      });
+
+      cards.forEach(card => scrollSpyObserver.observe(card));
+    }
+
+    // Remove Selected Plan (Image 2)
+    function removeSelectedPlan() {
+      const cur = $('pkg').value;
+      const p = pkgs.find(x => x.packageId === cur);
+      if (!p) {
+        showToast('Notice', 'No plan selected to remove.', 'info');
+        return;
+      }
+      showConfirmModal({
+        title: 'Remove Plan',
+        message: `Are you sure you want to remove plan "${p.name}" (Capacity: ${p.capacity} numbers) from your plan options?`,
+        confirmText: 'Remove Plan',
+        confirmClass: 'no',
+        onConfirm: () => {
+          addToSharedList('deleted_packages', cur);
+          showToast('Plan Removed', `Plan "${p.name}" removed from selection list.`, 'info');
+          load();
+        }
+      });
+    }
+
+    function restorePlans() {
+      const deleted = getSharedList('deleted_packages');
+      if (!deleted.length) {
+        showToast('Notice', 'No removed plans to restore.', 'info');
+        return;
+      }
+      deleted.forEach(id => removeFromSharedList('deleted_packages', id));
+      showToast('Plans Restored', `Restored ${deleted.length} plan(s).`, 'success');
+      load();
+    }
+
+    // Add / Remove Department
+    function addDep(name = '', nums = '') {
+      deps.push({ id: ++seq, name, nums, error: '' });
+      renderDeps();
+    }
+
+    function rmDep(id) {
+      if (deps.length <= 1) {
+        showToast('Notice', 'At least one department is required for registration.', 'info');
+        return;
+      }
+      deps = deps.filter(d => d.id !== id);
+      renderDeps();
+    }
+
+    function applyPresetDept(presetName) {
+      const empty = deps.find(d => !d.name.trim());
+      if (empty) {
+        empty.name = presetName;
+        renderDeps();
+      } else {
+        addDep(presetName);
+      }
+      showToast('Department Added', `Added ${presetName}`, 'info', 2000);
+    }
+
+    function sample() {
+      deps.forEach((d, i) => {
+        d.nums = SAMPLE[i] || '';
+      });
+      renderDeps();
+      showToast('Sample Loaded', 'Filled sample Philippine numbers for testing', 'info', 2500);
+    }
+
+    function parse(txt) {
+      return String(txt || '').split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
+    }
+
+    function previewLogoFile(input) {
+      const file = input.files && input.files[0];
+      const box = $('logoPreviewBox');
+      const img = $('logoPreviewImg');
+      const nameEl = $('logoPreviewName');
+      const sizeEl = $('logoPreviewSize');
+
+      if (!file) {
+        box.style.display = 'none';
+        return;
+      }
+
+      nameEl.textContent = file.name;
+      sizeEl.textContent = (file.size / 1024).toFixed(1) + ' KB · ' + (file.type || 'image');
+
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          img.src = e.target.result;
+          box.style.display = 'flex';
+        };
+        reader.readAsDataURL(file);
+      } else {
+        img.src = '/shared/assets/mobileum-logo.png';
+        box.style.display = 'flex';
+      }
+    }
+
+    function renderDeps() {
+      $('deps').innerHTML = deps.map((d, index) => {
+        const hasErr = !d.name.trim() && d.touched;
+        return `
+          <div class="req" data-id="${d.id}" style="margin-top:14px;background:#FFFFFF;border:1px solid ${hasErr ? 'var(--status-rejected)' : 'var(--border)'};">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <label style="margin:0;font-weight:600;font-size:13px;color:var(--deep-navy);">
+                Department #${index + 1} Name <span class="req-star">*</span>
+              </label>
+              ${deps.length > 1 ? `<button type="button" class="btn sm no" onclick="rmDep(${d.id})">✕ Remove</button>` : ''}
+            </div>
+
+            <div class="row" style="margin-top:0;">
+              <div style="flex:1;">
+                <input 
+                  list="presets" 
+                  value="${esc(d.name)}" 
+                  placeholder="e.g. Customer Service, Collections, Delivery" 
+                  oninput="upd(${d.id},'name',this.value)" 
+                  onblur="markTouched(${d.id})"
+                  class="${hasErr ? 'input-error' : ''}"
+                  style="width:100%;"
+                >
+                <div class="field-error" id="err_dept_${d.id}" style="display:${hasErr ? 'flex' : 'none'};">
+                  Department name is mandatory
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:10px;">
+              <label style="margin-bottom:4px;font-size:12.5px;">Phone Numbers (+63) &middot; <span class="hint">one per line</span></label>
+              <textarea 
+                placeholder="+63 917 123 4567&#10;0917 123 4568&#10;(02) 8123 4567" 
+                oninput="upd(${d.id},'nums',this.value)"
+                rows="3"
+              >${esc(d.nums)}</textarea>
+              <div class="chips" id="c${d.id}" style="margin-top:6px;"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      deps.forEach(chips);
+      summary();
+    }
+
+    function markTouched(id) {
+      const d = deps.find(x => x.id === id);
+      if (d) {
+        d.touched = true;
+        renderDeps();
+      }
+    }
+
+    function upd(id, k, v) {
+      const d = deps.find(x => x.id === id);
+      if (!d) return;
+      d[k] = v;
+      if (k === 'name' && v.trim()) {
+        d.touched = false;
+      }
+      if (k === 'nums') chips(d);
+      summary();
+    }
+
+    function chips(d) {
+      const el = $('c' + d.id);
+      if (!el) return;
+      const list = parse(d.nums);
+      if (!list.length) {
+        el.innerHTML = '<span class="hint">No numbers added for this department yet.</span>';
+        return;
+      }
+      el.innerHTML = list.map(x => {
+        const r = PH.normalize(x);
+        return r.ok
+          ? `<span class="chip"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> ${esc(r.display)} &middot; ${esc(r.type)}</span>`
+          : `<span class="chip bad" title="${esc(r.error)}">✕ ${esc(x)} &mdash; ${esc(r.error)}</span>`;
+      }).join('');
+    }
+
+    function all() {
+      const seen = new Set();
+      let n = 0, bad = 0, dup = 0;
+      deps.forEach(d => parse(d.nums).forEach(x => {
+        const r = PH.normalize(x);
+        if (!r.ok) bad++;
+        else if (seen.has(r.e164)) dup++;
+        else {
+          seen.add(r.e164);
+          n++;
+        }
+      }));
+      return { n, bad, dup };
+    }
+
+    function summary() {
+      const p = pkgs.find(x => x.packageId === $('pkg').value);
+      const a = all();
+      if (!p) {
+        $('sumry').textContent = '';
+        return;
+      }
+
+      const f = PH.fee(p.pricePHP || 0);
+      const over = a.n > p.capacity;
+
+      $('sumry').innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%;flex-wrap:wrap;gap:8px;">
+          <div>
+            <span style="font-size:13.5px;">Capacity Usage: </span>
+            <strong class="${over ? 'err' : 'good'}" style="font-size:14px;">${a.n} of ${p.capacity} numbers</strong>
+            ${a.bad ? ` &middot; <span class="err font-weight:600;">⚠ ${a.bad} invalid number(s)</span>` : ''}
+            ${a.dup ? ` &middot; <span class="err font-weight:600;">⚠ ${a.dup} duplicate(s)</span>` : ''}
+            ${over ? ` <div class="err" style="font-size:12px;margin-top:2px;">Exceeds ${p.name} plan capacity! Please upgrade package or remove numbers.</div>` : ''}
+          </div>
+          <div style="text-align:right;">
+            <span class="hint">Monthly Fee (incl. 12% VAT):</span>
+            <strong class="peso" style="font-size:15px;color:var(--primary-blue);display:block;">${peso(f.total)} / month</strong>
+            <span class="hint">(${peso(f.fee)} + 12% VAT ${peso(f.vat)})</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function validateForm() {
+      let valid = true;
+      const brandVal = $('brand').value.trim();
+      const brandErr = $('brandErr');
+      if (!brandVal) {
+        brandErr.style.display = 'flex';
+        $('brand').classList.add('input-error');
+        valid = false;
+      } else {
+        brandErr.style.display = 'none';
+        $('brand').classList.remove('input-error');
+      }
+
+      deps.forEach(d => {
+        if (!d.name.trim()) {
+          d.touched = true;
+          valid = false;
+        }
+      });
+
+      renderDeps();
+      return valid;
+    }
+
+    // Submit Registration
+    async function submitReq() {
+      const m = $('msg');
+      m.className = 'msg';
+      m.textContent = '';
+
+      const brand = $('brand').value.trim();
+      if (!brand) {
+        goToStep(2);
+        $('brandErr').style.display = 'flex';
+        $('brand').classList.add('input-error');
+        $('brand').focus();
+        showToast('Validation Error', 'Official bank name is mandatory.', 'error');
+        return;
+      }
+
+      let hasEmptyDept = false;
+      deps.forEach(d => {
+        if (!d.name.trim()) {
+          d.touched = true;
+          hasEmptyDept = true;
+        }
+      });
+
+      if (hasEmptyDept) {
+        renderDeps();
+        showToast('Missing Department Name', 'Every department must have a mandatory name.', 'error');
+        return;
+      }
+
+      const a = all();
+      if (a.n === 0) {
+        showToast('No Numbers Added', 'Please enter at least one phone number to register.', 'error');
+        return;
+      }
+
+      const p = pkgs.find(x => x.packageId === $('pkg').value);
+      if (p && a.n > p.capacity) {
+        showToast('Capacity Exceeded', `Your plan allows up to ${p.capacity} numbers; you entered ${a.n}.`, 'error');
+        return;
+      }
+
+      const btn = $('btnSubmit');
+      btn.disabled = true;
+      btn.innerHTML = dotsLoader() + ' Submitting registration...';
+
+      const fd = new FormData();
+      fd.append('packageId', $('pkg').value);
+      fd.append('brandName', brand);
+      fd.append('tagline', $('tag').value.trim());
+      fd.append('departments', JSON.stringify(deps.map(d => ({
+        name: d.name.trim(),
+        numbers: parse(d.nums)
+      }))));
+
+      if ($('logo').files[0]) {
+        fd.append('logo', $('logo').files[0]);
+      }
+
+      try {
+        const r = await api('/api/requests', { method: 'POST', body: fd });
+        saveClientRequest(r);
+        m.className = 'msg good';
+        m.innerHTML = `<strong>Registration Submitted!</strong> ${r.numbersCount} numbers submitted under <code>${r.requestId}</code>. Waiting for operator approval.`;
+        showToast('Registration Submitted', `${brand} successfully submitted for approval.`, 'success', 5000);
+
+        $('brand').value = '';
+        $('tag').value = '';
+        $('logo').value = '';
+        $('logoPreviewBox').style.display = 'none';
+        goToStep(1);
+
+        await load();
+        portalShell.switchTab('registrations');
+      } catch (e) {
+        m.className = 'msg err';
+        const list = e.data && e.data.errors;
+        m.innerHTML = `<strong>Submission Failed:</strong> ${esc(e.message)}` +
+          (list ? '<ul style="margin:8px 0 0 16px;padding:0;">' + list.map(x => `<li><strong>${esc(x.department)}</strong>${x.input ? ' (' + esc(x.input) + ')' : ''}: ${esc(x.error)}</li>`).join('') + '</ul>' : '');
+        showToast('Submission Error', e.message, 'error', 6000);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit Registration for Approval →';
+      }
+    }
+
+    function toggleCard(cardId) {
+      const card = document.getElementById(cardId);
+      if (card) {
+        card.classList.toggle('open');
+      }
+    }
+
+    // Remove Registration from Enterprise view
+    function removeMyRegistration(reqId, brandName) {
+      showConfirmModal({
+        title: 'Remove Registration',
+        message: `Are you sure you want to remove registration ${reqId} for "${brandName || 'this enterprise'}"?`,
+        confirmText: 'Remove Registration',
+        confirmClass: 'no',
+        onConfirm: () => {
+          addToSharedList('deleted_requests', reqId);
+          showToast('Registration Removed', `Registration ${reqId} removed.`, 'info');
+          load();
+        }
+      });
+    }
+
+    // Render Individual Registration Card
+    function reqHtml(r) {
+      const th = r.logoUrl && r.previewable
+        ? `<img src="${esc(r.logoUrl)}" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain;" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">`
+        : (r.logoUrl ? 'File' : `<span style="font-weight:700;color:var(--primary-blue);">${esc(initials(r.brandName))}</span>`);
+
+      const rows = (r.numbers || []).map(n => `
+        <tr>
+          <td><strong style="color:var(--deep-navy);">${esc(n.department)}</strong></td>
+          <td class="peso" style="font-weight:600;">${esc(n.phoneDisplay)}</td>
+          <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType)}</span></td>
+          <td><span class="badge ${esc(n.status)}">${esc(n.status)}</span></td>
+        </tr>
+      `).join('');
+
+      const isApproved = r.status === 'approved';
+      const isRejected = r.status === 'rejected';
+      const isPending = r.status === 'pending';
+
+      const timelineHtml = `
+        <div class="timeline">
+          <div class="timeline-line">
+            <div class="timeline-line-fill" style="width:${isApproved ? '100%' : isRejected ? '100%' : '50%'};background:${isRejected ? 'var(--status-rejected)' : 'var(--status-approved)'};"></div>
+          </div>
+          <div class="timeline-step completed">
+            <div class="timeline-dot">✓</div>
+            <div class="timeline-label">Submitted</div>
+          </div>
+          <div class="timeline-step ${isPending ? 'current' : 'completed'}">
+            <div class="timeline-dot">${isPending ? '•' : '✓'}</div>
+            <div class="timeline-label">Under Review</div>
+          </div>
+          <div class="timeline-step ${isApproved ? 'completed' : isRejected ? 'rejected' : ''}">
+            <div class="timeline-dot">${isApproved ? '✓' : isRejected ? '✕' : '3'}</div>
+            <div class="timeline-label">${isApproved ? 'Approved & Live' : isRejected ? 'Rejected' : 'Live Activation'}</div>
+          </div>
+        </div>
+      `;
+
+      const previewCard = r.numbers && r.numbers[0]
+        ? callerCard({
+            brandName: r.brandName,
+            tagline: r.tagline,
+            logoUrl: r.previewable ? r.logoUrl : null,
+            department: r.numbers[0].department,
+            display: r.numbers[0].phoneDisplay,
+            verified: isApproved
+          })
+        : '';
+
+      const cardId = 'card_' + r.requestId;
+      const isOpen = isPending || isApproved;
+
+      return `
+        <div class="collapsible-card ${isOpen ? 'open' : ''}" id="${cardId}">
+          <div class="collapsible-header" onclick="toggleCard('${cardId}')">
+            <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:0;">
+              <div class="thumb" style="width:48px;height:48px;border-radius:var(--radius-sm);">${th}</div>
+              <div>
+                <div style="font-weight:700;font-size:15px;color:var(--deep-navy);">${esc(r.brandName)}</div>
+                <div class="hint">
+                  <code>${esc(r.requestId)}</code> &middot; ${esc(r.packageName || 'Package')} &middot; 
+                  <strong class="peso">${peso(r.totalPHP)}/mo</strong> incl. 12% VAT
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="badge ${esc(r.status)}" style="font-size:12.5px;padding:4px 12px;">${esc(r.status)}</span>
+              <button class="btn sm no" onclick="event.stopPropagation();removeMyRegistration('${esc(r.requestId)}')">Remove</button>
+              <span class="collapsible-chevron">▼</span>
+            </div>
+          </div>
+
+          <div class="collapsible-body">
+            ${timelineHtml}
+
+            <div style="margin-top:16px;">
+              <h4 style="margin-bottom:8px;">Registered Numbers & Departments (${(r.numbers || []).length})</h4>
+              <div class="table-wrap">
+                <table class="data-table" style="font-size:12.5px;">
+                  <thead>
+                    <tr><th>Department</th><th>Phone Number</th><th>Type</th><th>Status</th></tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style="margin-top:20px;">
+              <h4 style="margin-bottom:6px;">Customer Live Caller-ID Experience</h4>
+              <div class="hint" style="margin-bottom:8px;">
+                ${isApproved 
+                  ? '<strong style="color:var(--status-approved);">● LIVE:</strong> Philippine customers now see this verified badge, brand name, and logo when receiving calls.' 
+                  : isPending 
+                    ? '<strong style="color:var(--status-pending);">⏳ PENDING:</strong> Awaiting operator verification. Preview below of what customers will see upon approval:' 
+                    : '<strong style="color:var(--status-rejected);">✕ REJECTED:</strong> These numbers are not active and are free to register again.'}
+              </div>
+              ${previewCard}
+            </div>
+
+            ${r.logoUrl ? `
+              <div style="margin-top:14px;padding:8px 12px;background:#F8FAFD;border-radius:var(--radius-sm);font-size:12px;">
+                Original Logo Asset: <a href="${esc(r.logoUrl)}" target="_blank" style="font-weight:600;">${esc(r.fileName || 'Open File')}</a>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // Remove My Registration
+    function removeMyRegistration(reqId) {
+      const r = myRequests.find(x => x.requestId === reqId);
+      const brandName = r ? r.brandName : reqId;
+      showConfirmModal({
+        title: 'Remove Registration',
+        message: `Are you sure you want to remove registration for "${brandName}" (${reqId}) from your view?`,
+        confirmText: 'Remove',
+        confirmClass: 'no',
+        onConfirm: () => {
+          addToSharedList('deleted_requests', reqId);
+          showToast('Registration Removed', `Registration for ${brandName} removed.`, 'info');
+          load();
+        }
+      });
+    }
+
+    // Remove & Restore Numbers (Image 1)
+    function removeMyNumber(phoneE164) {
+      showConfirmModal({
+        title: 'Remove Phone Number',
+        message: `Are you sure you want to remove ${phoneE164} from your numbers list?`,
+        confirmText: 'Remove Number',
+        confirmClass: 'no',
+        onConfirm: () => {
+          addToSharedList('deleted_my_numbers', phoneE164);
+          showToast('Number Removed', `Removed ${phoneE164} from your list.`, 'info');
+          renderMyNumbersTable();
+        }
+      });
+    }
+
+    function restoreMyNumber(phoneE164) {
+      removeFromSharedList('deleted_my_numbers', phoneE164);
+      showToast('Number Restored', `Restored ${phoneE164}.`, 'success');
+      renderMyNumbersTable();
+    }
+
+    function toggleDeletedMyNumbers() {
+      showDeletedMyNums = !showDeletedMyNums;
+      const btn = $('btnToggleDeletedMyNums');
+      if (btn) btn.textContent = showDeletedMyNums ? 'Show Active Numbers' : 'Show Removed Numbers';
+      renderMyNumbersTable();
+    }
+
+    // Render My Numbers Table (Image 1)
+    function renderMyNumbersTable() {
+      const tbody = $('myNumbersTableBody');
+      const query = ($('myNumSearch')?.value || '').toLowerCase().trim();
+      const deletedMyNums = getSharedList('deleted_my_numbers');
+
+      const numList = [];
+      myRequests.forEach(r => {
+        (r.numbers || []).forEach(n => {
+          numList.push({
+            ...n,
+            brandName: r.brandName,
+            status: r.status
+          });
+        });
+      });
+
+      const filtered = numList.filter(n => {
+        const isDel = deletedMyNums.includes(n.phoneE164);
+        if (showDeletedMyNums ? !isDel : isDel) return false;
+
+        if (!query) return true;
+        return (n.phoneDisplay || '').includes(query) ||
+               (n.phoneE164 || '').includes(query) ||
+               (n.department || '').toLowerCase().includes(query) ||
+               (n.brandName || '').toLowerCase().includes(query);
+      });
+
+      if (!filtered.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="empty-state">
+              <div class="empty-state-icon">📱</div>
+              <div class="empty-state-title">${showDeletedMyNums ? 'No removed numbers' : 'No numbers found'}</div>
+              <div class="empty-state-desc">${showDeletedMyNums ? 'No numbers currently in removed list.' : 'Your department numbers will be listed here with their real-time verification status.'}</div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(n => {
+        const isDel = deletedMyNums.includes(n.phoneE164);
+        return `
+          <tr>
+            <td><strong class="peso">${esc(n.phoneDisplay)}</strong> <span class="hint" style="font-size:11px;">(${esc(n.phoneE164)})</span></td>
+            <td><span class="chip" style="font-size:11px;">${esc(n.numberType)}</span></td>
+            <td><strong style="color:var(--deep-navy);">${esc(n.department)}</strong></td>
+            <td>${esc(n.brandName)}</td>
+            <td><span class="badge ${esc(n.status)}">${esc(n.status)}</span></td>
+            <td>
+              ${isDel ? `
+                <button class="btn sm ok" onclick="restoreMyNumber('${esc(n.phoneE164)}')">Restore</button>
+              ` : `
+                <button class="btn sm no" onclick="removeMyNumber('${esc(n.phoneE164)}')">Remove</button>
+              `}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Main Polling Loop
+    async function load() {
+      try {
+        const info = await api('/api/info');
+        $('lOp').href = info.operatorUrl;
+        $('lCu').href = info.customerUrl;
+        dbStatus($('dbstat'), info);
+
+        pkgs = await api('/api/packages');
+        const deletedPkgs = getSharedList('deleted_packages');
+        const activePkgs = pkgs.filter(p => !deletedPkgs.includes(p.packageId));
+
+        const btnRestore = $('btnRestorePlans');
+        if (btnRestore) {
+          btnRestore.style.display = deletedPkgs.length > 0 ? 'inline-block' : 'none';
+          btnRestore.textContent = `Restore Plans (${deletedPkgs.length})`;
+        }
+
+        const cur = $('pkg').value;
+        $('pkg').innerHTML = activePkgs.length
+          ? activePkgs.map(p => `<option value="${esc(p.packageId)}">${esc(p.name)} — Capacity: ${p.capacity} numbers — ${peso(p.pricePHP)}/mo (+ 12% VAT)</option>`).join('')
+          : '<option value="">No published packages available</option>';
+
+        if (cur && activePkgs.some(p => p.packageId === cur)) {
+          $('pkg').value = cur;
+        } else if (activePkgs.length) {
+          $('pkg').value = activePkgs[0].packageId;
+        }
+
+        const p = activePkgs.find(x => x.packageId === $('pkg').value);
+        $('pkgInfo').textContent = p
+          ? `Package capacity: up to ${p.capacity} numbers. Monthly price: ${peso(p.pricePHP)} + 12% VAT = ${peso(p.pricePHP * 1.12)} total.`
+          : '';
+
+        summary();
+
+        const rq = await api('/api/requests');
+        const deletedReqs = getSharedList('deleted_requests');
+        myRequests = mergeRequests(rq);
+
+        // Detect real-time status transitions
+        if (!isInitialLoad) {
+          myRequests.forEach(r => {
+            const oldStatus = prevStatuses.get(r.requestId);
+            if (oldStatus && oldStatus !== r.status && !deletedReqs.includes(r.requestId)) {
+              const isApp = r.status === 'approved';
+              showToast(
+                isApp ? 'Application Approved!' : 'Application Update',
+                `Your registration for ${r.brandName} has been ${r.status}!`,
+                isApp ? 'success' : 'warning',
+                7000
+              );
+
+              const bannerContainer = $('statusBanners');
+              const banner = document.createElement('div');
+              banner.className = `banner-notification card`;
+              banner.style.background = isApp ? 'var(--status-approved-bg)' : 'var(--status-rejected-bg)';
+              banner.style.borderColor = isApp ? 'var(--status-approved-border)' : 'var(--status-rejected-border)';
+              banner.style.color = isApp ? 'var(--status-approved)' : 'var(--status-rejected)';
+              banner.innerHTML = `
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <span style="font-size:20px;">${isApp ? '✓' : '✕'}</span>
+                  <div>
+                    <strong style="font-size:14px;">Your request for ${esc(r.brandName)} has been ${esc(r.status)}!</strong>
+                    <div style="font-size:12px;opacity:0.9;">
+                      ${isApp ? 'Caller ID verification is now LIVE on customer phones across the Philippines.' : 'Numbers have been released. You may update and resubmit.'}
+                    </div>
+                  </div>
+                </div>
+                <button class="btn sm" style="background:#FFFFFF;" onclick="this.parentElement.remove()">Dismiss</button>
+              `;
+              bannerContainer.insertBefore(banner, bannerContainer.firstChild);
+            }
+          });
+        }
+
+        prevStatuses = new Map(myRequests.map(r => [r.requestId, r.status]));
+        isInitialLoad = false;
+
+        const visibleRequests = myRequests.filter(r => !deletedReqs.includes(r.requestId));
+
+        const regBadge = $('nav_badge_regs');
+        if (regBadge) {
+          regBadge.style.display = visibleRequests.length ? 'inline-flex' : 'none';
+          regBadge.className = 'badge approved';
+          regBadge.textContent = visibleRequests.length;
+        }
+
+        // Render My Registrations List
+        const html = visibleRequests.length
+          ? visibleRequests.slice().reverse().map(reqHtml).join('')
+          : `
+            <div class="empty-state">
+              <div class="empty-state-icon">📋</div>
+              <div class="empty-state-title">No active registrations</div>
+              <div class="empty-state-desc">Use the Register tab above to submit your bank's caller ID application.</div>
+            </div>
+          `;
+
+        $('reqs').innerHTML = html;
+        renderMyNumbersTable();
+
+      } catch (e) {
+        $('dbstat').innerHTML = '<span class="err">Cannot reach the server (Check network / server.js)</span>';
+      }
+    }
+
+    $('presets').innerHTML = PH.DEPARTMENTS.map(d => `<option value="${esc(d)}">`).join('');
+    
+    DEFAULTS.forEach(n => addDep(n));
+    goToStep(1);
+    load();
+    setupScrollSpy();
+    setInterval(load, 3000);
+
+    if (syncChannel) {
+      syncChannel.onmessage = e => {
+        if (e.data && (e.data.type === 'sync_update' || e.data.type === 'status_override')) {
+          load();
+        }
+      };
+    }
+  </script>
+</body>
+</html>

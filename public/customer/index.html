@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mobileum Caller ID &middot; Customer Phone</title>
+  <link rel="stylesheet" href="/shared/common.css">
+  <style>
+    /* Smartphone Mockup Container & Aesthetics */
+    .phone-stage {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 10px 0;
+    }
+    .modern-phone {
+      width: 330px;
+      height: 660px;
+      background: #0f172a;
+      border-radius: 48px;
+      padding: 12px;
+      box-shadow: 
+        0 25px 60px -15px rgba(10, 16, 48, 0.4),
+        0 0 0 1px rgba(255, 255, 255, 0.12) inset,
+        0 0 0 3px #1e293b;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .dynamic-island {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 96px;
+      height: 24px;
+      background: #000000;
+      border-radius: 20px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 10px;
+    }
+    .island-camera {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #111a30;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .phone-screen {
+      flex: 1;
+      border-radius: 38px;
+      background: linear-gradient(180deg, #0e1529 0%, #080c18 100%);
+      color: #FFFFFF;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 28px 18px 30px;
+      text-align: center;
+      overflow: hidden;
+      position: relative;
+    }
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 0 10px;
+      color: #E2E8F0;
+      z-index: 10;
+    }
+    .status-icons {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      font-size: 10px;
+    }
+    /* Ringing pulse animation */
+    .ring-wrapper {
+      position: relative;
+      margin: 16px auto 12px;
+      width: 110px;
+      height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ring-wave {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(34, 211, 238, 0.6);
+      animation: ripple 2s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+    }
+    .ring-wave:nth-child(2) {
+      animation-delay: -0.6s;
+    }
+    .ring-wave:nth-child(3) {
+      animation-delay: -1.2s;
+    }
+    @keyframes ripple {
+      0% { transform: scale(0.85); opacity: 0.9; }
+      100% { transform: scale(1.6); opacity: 0; }
+    }
+    .caller-avatar {
+      width: 94px;
+      height: 94px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+      z-index: 5;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      color: var(--deep-navy);
+      font-size: 30px;
+      font-weight: 700;
+    }
+    .caller-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .caller-name {
+      font-size: 21px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #FFFFFF;
+      margin-top: 4px;
+      line-height: 1.25;
+    }
+    .verified-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(14, 159, 110, 0.2);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: #34D399;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 12px;
+      border-radius: var(--radius-full);
+      margin-top: 6px;
+    }
+    .unverified-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(220, 38, 38, 0.18);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #F87171;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 12px;
+      border-radius: var(--radius-full);
+      margin-top: 6px;
+    }
+    .caller-dept {
+      font-size: 13.5px;
+      color: #93C5FD;
+      margin-top: 4px;
+      font-weight: 500;
+    }
+    .caller-num {
+      font-size: 13.5px;
+      color: #94A3B8;
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    .caller-tagline {
+      font-size: 12px;
+      color: #CBD5E1;
+      font-style: italic;
+      margin-top: 6px;
+      opacity: 0.9;
+    }
+    .call-actions {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      margin-top: auto;
+      padding-bottom: 8px;
+    }
+    .call-btn {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #FFFFFF;
+      font-size: 24px;
+      border: none;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      transition: transform 0.15s ease;
+    }
+    .call-btn:hover {
+      transform: scale(1.08);
+    }
+    .call-btn.decline {
+      background: #EF4444;
+    }
+    .call-btn.accept {
+      background: #10B981;
+    }
+    .call-btn.hangup {
+      background: #EF4444;
+      width: 64px;
+      height: 64px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Hidden legacy header links for backward compatibility -->
+  <div style="display:none;">
+    <a id="lOp" target="_blank"></a>
+    <a id="lEn" target="_blank"></a>
+  </div>
+
+  <!-- TAB 1: PHONE SIMULATOR -->
+  <div data-tab-panel="phone">
+    <div class="grid-2" style="align-items:start;">
+      <!-- Modern Smartphone Device Column -->
+      <div class="phone-stage">
+        <div class="modern-phone">
+          <div class="dynamic-island">
+            <div class="island-camera"></div>
+          </div>
+          <div class="phone-screen" id="scr">
+            <!-- Screen content injected dynamically by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Simulator Controls Column -->
+      <div>
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Simulate Incoming Call</h2>
+              <div class="hint">The phone network performs real-time caller lookup via <code>/api/lookup</code> against the operator registry.</div>
+            </div>
+            <button class="btn sm" onclick="idle()">↺ Reset to Idle</button>
+          </div>
+
+          <div style="margin-bottom:20px;">
+            <label for="any">Dial Any Phone Number (+63)</label>
+            <div class="row" style="margin-top:6px;">
+              <input id="any" placeholder="+63 917 123 4567 or 0917 123 4567" style="flex:1;" onkeydown="if(event.key==='Enter')callNum(this.value)">
+              <button class="p" onclick="callNum($('any').value)">Simulate Call</button>
+            </div>
+            <div class="hint" style="margin-top:6px;">Try an approved number, a pending number, or an unregistered random number.</div>
+          </div>
+
+          <div>
+            <h3 style="margin-bottom:10px;">Select from Registered Numbers</h3>
+            <div id="reg" class="table-wrap" style="max-height:300px;overflow-y:auto;">
+              <div class="empty-state">Loading registered numbers...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Calls Snippet Card -->
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">Recent Call Activity</h2>
+            <button class="btn sm" onclick="portalShell.switchTab('history')">View Full History &rarr;</button>
+          </div>
+          <div id="hist">
+            <div class="hint">No calls simulated yet. Dial a number above to start.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: CALL HISTORY -->
+  <div data-tab-panel="history" style="display:none;">
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">Simulated Call History</h2>
+          <div class="hint">Complete log of simulated calls, caller verification status, and timestamps.</div>
+        </div>
+        <button class="btn sm" onclick="clearHistory()">Clear History</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time (Manila)</th>
+              <th>Caller Name</th>
+              <th>Department</th>
+              <th>Phone Number</th>
+              <th>Verification Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="fullHistoryTableBody">
+            <tr><td colspan="6" class="empty-state">No call history recorded.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/shared/common.js"></script>
+  <script src="/shared/ph.js"></script>
+  <script src="/shared/layout.js"></script>
+  <script>
+    let hist = [];
+    let callTimerInterval = null;
+    let callDurationSec = 0;
+    let currentCallingNum = '';
+
+    // Initialize layout shell
+    const portalShell = setupPortalLayout({
+      portalName: 'Mobileum Customer Phone',
+      portalRole: 'customer',
+      tabs: [
+        { id: 'phone', label: 'Phone Simulator', icon: 'phone' },
+        { id: 'history', label: 'Call History', icon: 'history', badgeId: 'nav_badge_calls' }
+      ],
+      defaultTab: 'phone'
+    });
+
+    const time = () => new Date().toLocaleTimeString('en-PH', {
+      timeZone: 'Asia/Manila',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    // Idle Screen
+    function idle() {
+      if (callTimerInterval) {
+        clearInterval(callTimerInterval);
+        callTimerInterval = null;
+      }
+      callDurationSec = 0;
+
+      const screen = $('scr');
+      screen.className = 'phone-screen';
+      screen.innerHTML = `
+        <div class="status-bar">
+          <span>${time()}</span>
+          <div class="status-icons">
+            <span>5G</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 19.4c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l1.9-1.9C9.22 19.64 10.57 20 12 20c4.97 0 9-4.03 9-9s-4.03-9-9-9zm0 15c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/></svg>
+            <svg width="14" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="1" y="6" width="18" height="12" rx="2"/><rect x="20" y="10" width="3" height="4" rx="1"/></svg>
+          </div>
+        </div>
+
+        <div style="margin:auto 0;padding:20px 0;">
+          <div style="font-size:52px;color:rgba(255,255,255,0.2);margin-bottom:12px;">📞</div>
+          <div style="font-size:16px;font-weight:600;color:#CBD5E1;">Waiting for Call</div>
+          <div class="hint" style="color:#64748B;margin-top:6px;">Mobileum Network &middot; Ready</div>
+        </div>
+
+        <div style="font-size:11px;color:#64748B;padding-bottom:6px;">
+          Swipe or trigger incoming call from panel &rarr;
+        </div>
+      `;
+    }
+
+    // Call In Progress Screen (When user clicks Accept)
+    function answerCall(callerObj) {
+      if (callTimerInterval) clearInterval(callTimerInterval);
+      callDurationSec = 0;
+
+      const screen = $('scr');
+      screen.className = 'phone-screen';
+
+      const updateCallDuration = () => {
+        callDurationSec++;
+        const mins = String(Math.floor(callDurationSec / 60)).padStart(2, '0');
+        const secs = String(callDurationSec % 60).padStart(2, '0');
+        const timerEl = document.getElementById('callDuration');
+        if (timerEl) timerEl.textContent = `${mins}:${secs}`;
+      };
+
+      callTimerInterval = setInterval(updateCallDuration, 1000);
+
+      const avatar = callerObj.logoUrl
+        ? `<img src="${esc(callerObj.logoUrl)}" alt="" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">`
+        : esc(initials(callerObj.brandName || callerObj.display));
+
+      screen.innerHTML = `
+        <div class="status-bar">
+          <span style="color:#34D399;">● <span id="callDuration">00:00</span></span>
+          <div class="status-icons">
+            <span>5G</span>
+            <svg width="14" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="1" y="6" width="18" height="12" rx="2"/><rect x="20" y="10" width="3" height="4" rx="1"/></svg>
+          </div>
+        </div>
+
+        <div style="margin:20px 0;">
+          <div class="caller-avatar" style="margin:0 auto 14px;">${avatar}</div>
+          <div class="caller-name">${esc(callerObj.brandName || callerObj.display)}</div>
+          ${callerObj.department ? `<div class="caller-dept">${esc(callerObj.department)}</div>` : ''}
+          <div class="caller-num">${esc(callerObj.display)}</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;max-width:240px;margin:0 auto 20px;">
+          <div style="width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;margin:auto;">🎤</div>
+          <div style="width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;margin:auto;">🔢</div>
+          <div style="width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;margin:auto;">🔊</div>
+        </div>
+
+        <div class="call-actions">
+          <button class="call-btn hangup" onclick="idle()" title="End Call">✕</button>
+        </div>
+      `;
+    }
+
+    // Simulate Call Execution
+    async function callNum(n) {
+      if (!String(n).trim()) return;
+      currentCallingNum = n;
+
+      if (callTimerInterval) {
+        clearInterval(callTimerInterval);
+        callTimerInterval = null;
+      }
+
+      let r;
+      try {
+        r = await api('/api/lookup?number=' + encodeURIComponent(n));
+      } catch (e) {
+        r = { registered: false, reason: 'invalid', message: e.message };
+      }
+
+      if (!r || !r.registered) {
+        const localHit = lookupLocalNumber(n);
+        if (localHit) {
+          r = localHit;
+        }
+      }
+
+      const disp = r.display || n;
+      const screen = $('scr');
+
+      if (r.registered) {
+        // VERIFIED ENTERPRISE CALL
+        const logoHtml = r.logoUrl
+          ? `<img src="${esc(r.logoUrl)}" alt="${esc(r.brandName)}" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">`
+          : esc(initials(r.brandName));
+
+        screen.className = 'phone-screen';
+        screen.innerHTML = `
+          <div class="status-bar">
+            <span>Incoming Call &middot; ${time()}</span>
+            <div class="status-icons">
+              <span>5G</span>
+              <svg width="14" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="1" y="6" width="18" height="12" rx="2"/><rect x="20" y="10" width="3" height="4" rx="1"/></svg>
+            </div>
+          </div>
+
+          <div style="margin:auto 0;">
+            <div class="ring-wrapper">
+              <div class="ring-wave"></div>
+              <div class="ring-wave"></div>
+              <div class="ring-wave"></div>
+              <div class="caller-avatar">${logoHtml}</div>
+            </div>
+
+            <div class="caller-name">${esc(r.brandName)}</div>
+            <div>
+              <span class="verified-pill">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                Verified business
+              </span>
+            </div>
+            <div class="caller-dept">${esc(r.department)}</div>
+            <div class="caller-num">${esc(disp)}</div>
+            ${r.tagline ? `<div class="caller-tagline">"${esc(r.tagline)}"</div>` : ''}
+          </div>
+
+          <div class="call-actions">
+            <button class="call-btn decline" onclick="idle()" title="Decline Call">✕</button>
+            <button class="call-btn accept" onclick="answerCall({ brandName: '${esc(r.brandName)}', department: '${esc(r.department)}', display: '${esc(disp)}', logoUrl: '${esc(r.logoUrl || '')}' })" title="Accept Call">📞</button>
+          </div>
+        `;
+      } else {
+        // UNKNOWN / PENDING / UNREGISTERED CALL
+        const why = r.reason === 'pending'
+          ? 'Not yet approved: ' + (r.brandName || 'Registration pending')
+          : r.reason === 'invalid'
+            ? (r.message || 'Invalid Philippine number')
+            : 'Unregistered number · Not a verified business';
+
+        screen.className = 'phone-screen';
+        screen.innerHTML = `
+          <div class="status-bar">
+            <span>Incoming Call &middot; ${time()}</span>
+            <div class="status-icons">
+              <span>5G</span>
+              <svg width="14" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="1" y="6" width="18" height="12" rx="2"/><rect x="20" y="10" width="3" height="4" rx="1"/></svg>
+            </div>
+          </div>
+
+          <div style="margin:auto 0;">
+            <div class="ring-wrapper">
+              <div class="ring-wave" style="border-color:rgba(239, 68, 68, 0.4);"></div>
+              <div class="caller-avatar" style="background:#334155;color:#E2E8F0;">?</div>
+            </div>
+
+            <div class="caller-name">${esc(disp)}</div>
+            <div>
+              <span class="unverified-pill">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                Unknown caller
+              </span>
+            </div>
+            <div class="hint" style="color:#CBD5E1;margin-top:8px;max-width:240px;margin-left:auto;margin-right:auto;font-size:12px;">${esc(why)}</div>
+          </div>
+
+          <div class="call-actions">
+            <button class="call-btn decline" onclick="idle()" title="Decline Call">✕</button>
+            <button class="call-btn accept" onclick="answerCall({ brandName: 'Unknown caller', department: '', display: '${esc(disp)}', logoUrl: '' })" title="Accept Call">📞</button>
+          </div>
+        `;
+      }
+
+      // Record History
+      const record = {
+        t: time(),
+        who: r.registered ? r.brandName : 'Unknown caller',
+        dept: r.department || '',
+        n: disp,
+        rawNumber: n,
+        ok: r.registered,
+        reason: r.reason
+      };
+
+      hist.unshift(record);
+      hist = hist.slice(0, 30);
+      renderHistory();
+    }
+
+    function renderHistory() {
+      // 1. Sidebar/Card recent history
+      const histEl = $('hist');
+      if (!hist.length) {
+        histEl.innerHTML = '<div class="hint">No calls simulated yet.</div>';
+      } else {
+        histEl.innerHTML = hist.slice(0, 5).map(h => `
+          <div class="call">
+            <div>
+              <div style="font-weight:600;color:var(--deep-navy);">${esc(h.who)}${h.dept ? ' &middot; ' + esc(h.dept) : ''}</div>
+              <span class="t font-weight:500;">${esc(h.n)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              ${h.ok ? '<span class="badge approved">verified</span>' : '<span class="badge">unknown</span>'}
+              <span class="t">${esc(h.t)}</span>
+              <button class="btn sm" onclick="callNum('${esc(h.rawNumber)}')">Call</button>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // 2. Full History Tab Table
+      const fullTbody = $('fullHistoryTableBody');
+      if (fullTbody) {
+        if (!hist.length) {
+          fullTbody.innerHTML = '<tr><td colspan="6" class="empty-state">No call history recorded.</td></tr>';
+        } else {
+          fullTbody.innerHTML = hist.map(h => `
+            <tr>
+              <td class="hint">${esc(h.t)}</td>
+              <td><strong style="color:var(--deep-navy);">${esc(h.who)}</strong></td>
+              <td>${esc(h.dept || '-')}</td>
+              <td class="peso">${esc(h.n)}</td>
+              <td>${h.ok ? '<span class="badge approved">✓ Verified Business</span>' : '<span class="badge rejected">✕ Unknown / Unverified</span>'}</td>
+              <td><button class="btn sm" onclick="callNum('${esc(h.rawNumber)}');portalShell.switchTab('phone');">Call Again</button></td>
+            </tr>
+          `).join('');
+        }
+      }
+
+      // Badge in nav
+      const badge = $('nav_badge_calls');
+      if (badge) {
+        badge.style.display = hist.length ? 'inline-flex' : 'none';
+        badge.className = 'badge approved';
+        badge.textContent = hist.length;
+      }
+    }
+
+    function clearHistory() {
+      hist = [];
+      renderHistory();
+      showToast('History Cleared', 'Call history cleared.', 'info');
+    }
+
+    // Polling Registered Numbers for Simulation
+    async function load() {
+      try {
+        const info = await api('/api/info');
+        $('lOp').href = info.operatorUrl;
+        $('lEn').href = info.enterpriseUrl;
+
+        const serverNumbers = await api('/api/numbers');
+        const list = mergeNumbers(serverNumbers);
+        const regEl = $('reg');
+
+        if (!list.length) {
+          regEl.innerHTML = '<div class="empty-state" style="padding:20px;"><div class="empty-state-title">No numbers registered</div><div class="empty-state-desc">Approve a request in Operator portal to see numbers here.</div></div>';
+        } else {
+          regEl.innerHTML = `
+            <table class="data-table" style="font-size:12.5px;">
+              <thead>
+                <tr><th>Enterprise / Department</th><th>Phone Number</th><th>Action</th></tr>
+              </thead>
+              <tbody>
+                ${list.map(n => `
+                  <tr>
+                    <td>
+                      <strong style="color:var(--deep-navy);">${esc(n.brandName)}</strong>
+                      <div class="hint">${esc(n.department)}</div>
+                    </td>
+                    <td><strong class="peso">${esc(n.phoneDisplay)}</strong></td>
+                    <td>
+                      <button class="btn sm p" onclick="callNum('${esc(n.phoneE164)}')">
+                        Simulate Call &rarr;
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+        }
+      } catch (e) {}
+    }
+
+    idle();
+    load();
+    setInterval(load, 3000);
+
+    if (syncChannel) {
+      syncChannel.onmessage = e => {
+        if (e.data && (e.data.type === 'sync_update' || e.data.type === 'status_override')) {
+          load();
+        }
+      };
+    }
+  </script>
+</body>
+</html>

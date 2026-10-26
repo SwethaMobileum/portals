@@ -1,0 +1,7 @@
+{
+  "operatorPort": 4001,
+  "enterprisePort": 4002,
+  "customerPort": 4003,
+  "sharedDir": "shared",
+  "databasePath": ""
+}
