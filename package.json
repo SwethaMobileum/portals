@@ -9,11 +9,13 @@
     "unified": "node server.js",
     "operator": "node server.js operator",
     "enterprise": "node server.js enterprise",
-    "customer": "node server.js customer"
+    "customer": "node server.js customer",
+    "migrate:workbook": "node scripts/migrate-workbook-to-mongodb.js"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "mongodb": "^6.20.0"
   }
 }

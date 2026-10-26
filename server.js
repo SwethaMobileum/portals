@@ -4,6 +4,7 @@
 // Both read and write the SAME Excel workbook through db.js.
 const express = require('express');
 const multer = require('multer');
+const ExcelJS = require('exceljs');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -325,6 +326,20 @@ app.get('/api/files/:id', wrap(async (req, res) => {
     return res.send(mem.buffer);
   }
 
+  const storedFile = await db.getStoredFile(fileId);
+  if (storedFile && storedFile.buffer) {
+    const dispo = req.query.download || !PREVIEWABLE.has(storedFile.mimeType) ? 'attachment' : 'inline';
+    res.set({
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
+      'Content-Type': storedFile.mimeType,
+      'Content-Length': storedFile.buffer.length,
+      'Cache-Control': 'public, max-age=86400',
+      'Content-Disposition': `${dispo}; filename*=UTF-8''${encodeURIComponent(storedFile.originalName)}`,
+      'X-Content-Type-Options': 'nosniff'
+    });
+    return res.send(storedFile.buffer);
+  }
+
   // 2. Check database files array & physical disk
   const s = await db.readAll();
   const rec = (s.files || []).find(f => f.fileId === fileId);
@@ -371,8 +386,36 @@ app.get('/api/files/:id', wrap(async (req, res) => {
   res.status(404).json({ error: 'file not found' });
 }));
 
-// OPERATOR: download a copy of the shared Excel database, or a live CSV feed for a second workbook
-app.get('/api/database', only('operator'), (_req, res) => fs.existsSync(db.DB_PATH) ? res.download(db.DB_PATH, 'CallerID-Database-copy.xlsx') : res.status(404).json({ error: 'database file not created yet' }));
+// OPERATOR: download a copy of the configured database
+app.get('/api/database', only('operator'), wrap(async (_req, res) => {
+  if (db.getStatus().backend !== 'mongodb') {
+    return fs.existsSync(db.DB_PATH)
+      ? res.download(db.DB_PATH, 'CallerID-Database-copy.xlsx')
+      : res.status(404).json({ error: 'database file not created yet' });
+  }
+
+  const state = await db.readAll();
+  const workbook = new ExcelJS.Workbook();
+  for (const [sheetName, key] of [
+    ['Packages', 'packages'],
+    ['Requests', 'requests'],
+    ['Numbers', 'numbers'],
+    ['Files', 'files']
+  ]) {
+    const worksheet = workbook.addWorksheet(sheetName);
+    const columns = db.COLS[sheetName];
+    worksheet.addRow(columns).font = { bold: true };
+    for (const row of state[key]) worksheet.addRow(columns.map(column => row[column] ?? ''));
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+  }
+  const content = Buffer.from(await workbook.xlsx.writeBuffer());
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': 'attachment; filename="CallerID-Database-copy.xlsx"',
+    'Cache-Control': 'no-store'
+  });
+  res.send(content);
+}));
 const csvCell = v => { let t = String(v ?? ''); if (/^[=+\-@\t\r]/.test(t)) t = "'" + t; return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
 const csvRaw = v => String(v ?? '');                       // phone numbers: already validated, keep the leading +63
 const sendCsv = (res, header, rows) => { res.set({ 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store' }); res.send('\ufeff' + [header.join(','), ...rows].join('\r\n') + '\r\n'); };

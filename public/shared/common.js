@@ -114,7 +114,16 @@ function callerCard(o) {
 // Shows where the data is saved (the shared Excel workbook)
 function dbStatus(el, s) {
   if (!el) return;
+  if (s.error) {
+    el.innerHTML = `<span class="err">Database unavailable: ${esc(s.error)}</span>`;
+    return;
+  }
   const name = (s.database || '').split(/[\\/]/).pop() || 'CallerID-Database.xlsx';
+  if (s.backend === 'mongodb') {
+    el.innerHTML = `<span style="color:var(--status-approved)">●</span> Shared MongoDB database: <b>${esc(name.replace(/^MongoDB:\s*/, ''))}</b>` +
+      (s.lastFlush ? ` &middot; last saved ${new Date(s.lastFlush).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila' })}` : '');
+    return;
+  }
   el.innerHTML = s.pending > 0
     ? `<span class="err"><strong>${s.pending}</strong> change(s) waiting to be written into <b>${esc(name)}</b> (close it in Excel if open)</span>`
     : `<span style="color:var(--status-approved)">●</span> Shared Excel database: <b>${esc(name)}</b>` +

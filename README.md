@@ -21,10 +21,9 @@ The platform provides a synchronized ecosystem where **Telecom Operators**, **En
 ## ⚡ Tech Stack & Architecture
 
 - **Backend**: Node.js & Express with multipart form file upload support (`multer`).
-- **Database**: Single Excel workbook (`shared/CallerID-Database.xlsx`) managed via `exceljs`.
-  - Concurrency & journal protection (`.pending-changes.jsonl` with cross-process file locks).
-  - Works with real Excel desktop or browser live view without file locking conflicts.
-  - Durable only when the workbook and journal are on a persistent filesystem shared by all application processes.
+- **Database**: MongoDB Atlas for hosted durable storage; local runs use the Excel workbook (`shared/CallerID-Database.xlsx`) unless `MONGODB_URI` is set.
+  - The local workbook uses `.pending-changes.jsonl` journaling and cross-process locks.
+  - The Atlas backend stores uploads in MongoDB GridFS and shares records across instances.
 - **Frontend**: Pure Vanilla HTML5, modern CSS3 (Mobileum design system, sleek dark glassmorphism, responsive cards, micro-animations), and modular vanilla JavaScript.
 - **Localization**: Philippine Peso (`₱15,000.00` with 12% VAT) and E.164 +63 phone number normalizer supporting Mobile, Metro Manila Landlines, Provincial, and Toll-Free numbers.
 
@@ -119,10 +118,17 @@ Follow the interactive prompts and select default settings. For production:
 vercel --prod
 ```
 
-### Persistence requirements for Vercel
-- **Static Assets**: Portal pages can be served through Vercel's CDN.
-- **Serverless API**: API calls are handled by `api/index.js` running Express.
-- **Data storage**: Vercel's `/tmp` directory is ephemeral and isolated between serverless instances. Copying the workbook there only creates a temporary working copy; it does not preserve changes across cold starts or instances. Do not use this deployment for persistent customer data. A production Vercel deployment requires replacing the file store with a durable shared database or object-storage solution and configuring its credentials. Until that adapter is implemented, run the app on a host with a persistent shared filesystem (or use local mode).
+### Persistent storage with MongoDB Atlas
+1. Create an Atlas database user and allow network access from your deployment. Use the least-privilege access required for the application database.
+2. Add these environment variables in Vercel Project Settings → Environment Variables:
+   - `MONGODB_URI`: the Atlas connection URI (keep it secret; do not commit it).
+   - `MONGODB_DB_NAME`: optional database name; defaults to `mobileum_portals`.
+3. Redeploy the Vercel project after setting the variables. The Operator and Enterprise portals will then share MongoDB collections for packages, requests, numbers, and file metadata; uploaded logos are stored in MongoDB GridFS.
+4. On the first connection, if the Atlas database is empty, the app seeds records from its bundled workbook when available. Vercel's `/tmp` is not a migration source and is not durable. Existing records that only existed in a previous Vercel `/tmp` instance cannot be recovered; recreate those plans or migrate them from a persistent workbook before going live.
+
+To import records from a workbook you have locally, set `MONGODB_URI` and (if needed) `DATABASE_PATH` in PowerShell, then run `npm run migrate:workbook`. The migration is idempotent and only inserts records whose IDs are not already in Atlas.
+
+For local MongoDB-backed runs, set `MONGODB_URI` in the shell before starting the portals. If it is omitted, local runs continue using the shared Excel workbook. Never set or expose database credentials in browser code.
 
 ---
 

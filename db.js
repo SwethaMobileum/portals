@@ -1,15 +1,15 @@
 'use strict';
-// Shared "database" = ONE Excel workbook used by both the Operator and the Enterprise server.
-//  - Every change is first written to a small journal file (never blocked, even if Excel has the workbook open).
-//  - Then it is applied IN PLACE to the same workbook (rows, status, clickable links, logo thumbnails).
-//  - If the workbook is open in Excel (Windows locks it), the changes wait in the journal and are written
-//    automatically as soon as it is closed. Both websites always show the merged, up-to-date view.
+// MongoDB Atlas is used for Vercel or when MONGODB_URI is configured.
+// Local runs otherwise use one shared Excel workbook with an fsynced journal and cross-process lock.
 const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const mongoStore = require('./mongo-store');
 
 const IS_VERCEL = !!process.env.VERCEL;
+const USE_MONGO = IS_VERCEL || mongoStore.configured();
+let mongoInitialization;
 let cfg = {};
 try { cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8')); } catch (e) {}
 
@@ -138,6 +138,11 @@ function readJournal() {
   });
 }
 async function enqueue(entry) {
+  if (USE_MONGO) {
+    await ensureMongo();
+    await mongoStore.enqueue(entry);
+    return;
+  }
   await withDbLock(async () => {
     const fd = fs.openSync(JOURNAL, 'a');
     try {
@@ -152,6 +157,26 @@ async function enqueue(entry) {
   } else {
     scheduleFlush(150);
   }
+}
+
+async function ensureMongo() {
+  if (!mongoInitialization) {
+    mongoInitialization = (async () => {
+      const seed = await loadWorkbookState();
+      const fileBuffers = new Map();
+      for (const file of seed.files) {
+        const fullPath = path.join(SHARED_DIR, file.storagePath || '');
+        if (file.fileId && file.storagePath && fs.existsSync(fullPath)) {
+          fileBuffers.set(file.fileId, fs.readFileSync(fullPath));
+        }
+      }
+      await mongoStore.initialize(seed, fileBuffers);
+    })().catch(error => {
+      mongoInitialization = null;
+      throw error;
+    });
+  }
+  return mongoInitialization;
 }
 
 // ---------- reading the workbook (cached until the file changes) ----------
@@ -204,6 +229,10 @@ function applyToState(s, e) {
   }
 }
 async function readAll() {           // workbook + changes still waiting in the journal
+  if (USE_MONGO) {
+    await ensureMongo();
+    return mongoStore.readAll();
+  }
   const s = JSON.parse(JSON.stringify(await loadWorkbookState()));
   for (const e of readJournal()) applyToState(s, e);
   s.files = (s.files || []).map(f => {
@@ -225,6 +254,14 @@ async function readAll() {           // workbook + changes still waiting in the 
     return f;
   });
   return s;
+}
+
+async function getStoredFile(fileId) {
+  if (!USE_MONGO) return null;
+  await ensureMongo();
+  const file = await mongoStore.getFile(fileId);
+  if (file) saveInMemoryFile(fileId, file.buffer, file.mimeType, file.originalName);
+  return file;
 }
 
 // ---------- writing into the SAME workbook ----------
@@ -338,6 +375,7 @@ async function writeWorkbook(entries) {
 let flushTimer = null, flushInfo = { lastFlush: null, error: null };
 function scheduleFlush(ms = 150) { clearTimeout(flushTimer); flushTimer = setTimeout(flush, ms); }
 async function flush(required = false) {
+  if (USE_MONGO) return;
   try {
     await withDbLock(async () => {
       const entries = readJournal(); if (!entries.length) return;
@@ -354,11 +392,15 @@ async function flush(required = false) {
   }
 }
 function startBackground() {
+  if (USE_MONGO) return;
   scheduleFlush(300);
   setInterval(() => { try { if (fs.existsSync(JOURNAL) && fs.statSync(JOURNAL).size > 0) scheduleFlush(100); } catch (e) {} }, 3000);
 }
 function getStatus() {
+  if (USE_MONGO) {
+    return mongoStore.status();
+  }
   return { database: DB_PATH, pending: readJournal().length, lastFlush: flushInfo.lastFlush, error: flushInfo.error, readError };
 }
 
-module.exports = { cfg, SHARED_DIR, STORAGE_DIR, DB_PATH, newId, enqueue, readAll, getStatus, startBackground, flush, saveInMemoryFile, getInMemoryFile };
+module.exports = { cfg, COLS, SHARED_DIR, STORAGE_DIR, DB_PATH, newId, enqueue, readAll, readWorkbookSnapshot: loadWorkbookState, getStatus, startBackground, flush, saveInMemoryFile, getInMemoryFile, getStoredFile };
