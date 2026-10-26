@@ -171,6 +171,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <label for="pkg" style="margin:0;">Select Plan <span class="req-star">*</span></label>
           <div style="display:flex;gap:6px;align-items:center;">
+            <button type="button" class="btn sm p" onclick="openAddPlanModal()" style="padding:2px 10px;font-size:11.5px;" title="Add a new custom plan">＋ Add Plan</button>
             <button type="button" class="btn sm no" onclick="removeSelectedPlan()" style="padding:2px 10px;font-size:11.5px;" title="Remove this plan from selection list">✕ Remove Plan</button>
           </div>
         </div>
@@ -487,7 +488,83 @@
       cards.forEach(card => scrollSpyObserver.observe(card));
     }
 
-    // Remove Selected Plan (Image 2)
+    // Plan Management: Add Custom Plan & Remove Selected Plan
+    function openAddPlanModal() {
+      $('epPlanName').value = '';
+      $('epPlanCap').value = '10';
+      $('epPlanPrice').value = '25000';
+      $('epPlanBrand').checked = true;
+      $('epPlanTag').checked = true;
+      $('epPlanLogo').checked = true;
+      $('epPlanErr').style.display = 'none';
+      $('addPlanModal').classList.add('open');
+      setTimeout(() => $('epPlanName').focus(), 100);
+    }
+
+    function closeAddPlanModal() {
+      $('addPlanModal').classList.remove('open');
+    }
+
+    async function submitAddPlan() {
+      const name = $('epPlanName').value.trim();
+      const cap = Number($('epPlanCap').value);
+      const price = parseFloat($('epPlanPrice').value || '0');
+      const errEl = $('epPlanErr');
+
+      if (!name) {
+        errEl.textContent = 'Plan name is required.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (!Number.isInteger(cap) || cap <= 0) {
+        errEl.textContent = 'Capacity must be a positive whole number.';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (isNaN(price) || price < 0) {
+        errEl.textContent = 'Price must be a valid amount in Philippine pesos (₱).';
+        errEl.style.display = 'block';
+        return;
+      }
+      errEl.style.display = 'none';
+
+      const btn = $('btnSubmitAddPlan');
+      btn.disabled = true;
+      btn.innerHTML = dotsLoader() + ' Publishing...';
+
+      try {
+        const p = await api('/api/packages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            capacity: cap,
+            pricePHP: price,
+            brand: $('epPlanBrand').checked,
+            tagline: $('epPlanTag').checked,
+            logoIncluded: $('epPlanLogo').checked
+          })
+        });
+
+        saveClientPackage(p);
+        closeAddPlanModal();
+        showToast('Plan Added', `Plan "${p.name}" (Capacity: ${p.capacity}) published and saved permanently.`, 'success');
+
+        await load();
+        if ($('pkg')) {
+          $('pkg').value = p.packageId;
+          summary();
+        }
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = 'block';
+        showToast('Error', e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Publish & Select Plan';
+      }
+    }
+
     function removeSelectedPlan() {
       const cur = $('pkg').value;
       const p = pkgs.find(x => x.packageId === cur);
@@ -502,8 +579,9 @@
         confirmClass: 'no',
         onConfirm: async () => {
           try {
+            removeClientPackage(cur);
             await api('/api/packages/' + encodeURIComponent(cur), { method: 'DELETE' });
-            showToast('Plan Removed', `Plan "${p.name}" was removed from both portals.`, 'info');
+            showToast('Plan Removed', `Plan "${p.name}" was permanently removed from both portals.`, 'info');
             await load();
           } catch (e) {
             showToast('Error', e.message, 'error');
@@ -1061,7 +1139,8 @@
         dbStatus($('dbstat'), info);
 
         await migrateLegacyPackageRemovals();
-        pkgs = await api('/api/packages');
+        const serverPkgs = await api('/api/packages');
+        pkgs = mergePackages(serverPkgs);
         const activePkgs = pkgs;
 
         const cur = $('pkg').value;
@@ -1163,11 +1242,52 @@
 
     if (syncChannel) {
       syncChannel.onmessage = e => {
-        if (e.data && (e.data.type === 'sync_update' || e.data.type === 'status_override')) {
+        if (e.data && (
+          e.data.type === 'sync_update' ||
+          e.data.type === 'status_override' ||
+          e.data.type === 'package_update' ||
+          e.data.type === 'package_delete'
+        )) {
           load();
         }
       };
     }
   </script>
+
+  <!-- Modal: Add New Custom Plan in Enterprise Portal -->
+  <div id="addPlanModal" class="confirm-modal-backdrop">
+    <div class="confirm-modal-box" style="max-width:440px;">
+      <div class="confirm-modal-header">
+        <h3 class="confirm-modal-title">＋ Add Custom Plan</h3>
+        <button type="button" class="confirm-modal-close" onclick="closeAddPlanModal()">&times;</button>
+      </div>
+      <div class="confirm-modal-body" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="form-group" style="margin:0;">
+          <label for="epPlanName" style="font-size:12px;">Plan Name <span class="req-star">*</span></label>
+          <input id="epPlanName" placeholder="e.g. Enterprise VIP Plan" maxlength="80">
+        </div>
+        <div class="grid-2" style="gap:12px;">
+          <div class="form-group" style="margin:0;">
+            <label for="epPlanCap" style="font-size:12px;">Number Capacity <span class="req-star">*</span></label>
+            <input id="epPlanCap" type="number" min="1" max="1000" value="10" placeholder="e.g. 10">
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label for="epPlanPrice" style="font-size:12px;">Monthly Fee (PHP ₱) <span class="req-star">*</span></label>
+            <input id="epPlanPrice" type="number" min="0" step="500" value="25000" placeholder="e.g. 25000">
+          </div>
+        </div>
+        <div style="display:flex;gap:14px;padding:6px 0;font-size:12px;color:var(--deep-navy);">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin:0;"><input type="checkbox" id="epPlanBrand" checked> Brand</label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin:0;"><input type="checkbox" id="epPlanTag" checked> Tagline</label>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin:0;"><input type="checkbox" id="epPlanLogo" checked> Logo</label>
+        </div>
+        <div id="epPlanErr" class="field-error" style="display:none;"></div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn sm" onclick="closeAddPlanModal()">Cancel</button>
+        <button type="button" class="btn sm p" id="btnSubmitAddPlan" onclick="submitAddPlan()">Publish &amp; Select Plan</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

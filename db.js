@@ -1,6 +1,8 @@
 'use strict';
 // MongoDB Atlas is used for Vercel or when MONGODB_URI is configured.
-// Local runs otherwise use one shared Excel workbook with an fsynced journal and cross-process lock.
+// Local and serverless runs use a dual-layer persistence engine:
+// 1. An atomic, durable JSON store ('shared/database.json') for instant ACID-like persistence.
+// 2. The shared Excel workbook ('shared/CallerID-Database.xlsx') with cross-process locking & automatic sync.
 const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +19,7 @@ const BASE_DIR = IS_VERCEL ? '/tmp' : __dirname;
 const SHARED_DIR = path.resolve(BASE_DIR, process.env.SHARED_DIR || cfg.sharedDir || 'shared');
 const USER_DB = !!(process.env.DATABASE_PATH || cfg.databasePath);
 const DB_PATH = path.resolve(BASE_DIR, process.env.DATABASE_PATH || cfg.databasePath || path.join(SHARED_DIR, 'CallerID-Database.xlsx'));
+const JSON_DB = path.join(SHARED_DIR, 'database.json');
 const PREFIX = cfg.sheetPrefix || '';
 const STORAGE_DIR = path.join(SHARED_DIR, 'storage', 'logos');
 const JOURNAL = path.join(SHARED_DIR, '.pending-changes.jsonl');
@@ -38,10 +41,97 @@ function getInMemoryFile(fileId) {
   return memoryFiles.get(fileId) || null;
 }
 
+const COLS = {
+  Packages: ['packageId', 'name', 'capacity', 'pricePHP', 'brand', 'tagline', 'logoIncluded', 'status', 'createdAt'],
+  Requests: ['requestId', 'packageId', 'brandName', 'tagline', 'status', 'logoFileId', 'createdAt', 'departments', 'numbersCount', 'monthlyFeePHP', 'vatPHP', 'totalPHP', 'logoLink', 'preview'],
+  Numbers: ['numberId', 'requestId', 'brandName', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'status', 'createdAt'],
+  Files: ['fileId', 'requestId', 'originalName', 'storedName', 'storagePath', 'url', 'mimeType', 'sizeBytes', 'sha256', 'uploadedBy', 'uploadedAt', 'preview'],
+};
+const MONEY = new Set(['pricePHP', 'monthlyFeePHP', 'vatPHP', 'totalPHP']);     // shown as ₱1,234.00 in Excel
+const PESO_FMT = '"₱"#,##0.00';
+const DISPLAY_ONLY = new Set(['logoLink', 'preview']);
+const EXCEL_IMG = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' };
+const LINK_FONT = { color: { argb: 'FF0563C1' }, underline: true };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const newId = p => `${p}-${crypto.randomBytes(4).toString('hex')}`;
+
+const plain = v => {
+  if (v instanceof Date) return v.toISOString();
+  if (v && typeof v === 'object') {
+    if ('hyperlink' in v) return v.hyperlink;
+    if ('result' in v) return v.result ?? '';
+    if (v.richText) return v.richText.map(t => t.text).join('');
+  }
+  return v ?? '';
+};
+
+// In-memory state and cache control
+const EMPTY = () => ({ packages: [], requests: [], numbers: [], files: [] });
+let memoryState = null;
+let lastJsonMtime = 0;
+let readError = null;
+
+function saveStateToJson(state) {
+  if (!state) return;
+  try {
+    fs.mkdirSync(path.dirname(JSON_DB), { recursive: true });
+    const payload = JSON.stringify(state, null, 2);
+    const tmp = `${JSON_DB}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, payload, 'utf8');
+    try {
+      fs.renameSync(tmp, JSON_DB);
+    } catch (e) {
+      // Windows file replacement fallback
+      fs.copyFileSync(tmp, JSON_DB);
+      try { fs.unlinkSync(tmp); } catch (x) {}
+    }
+    try {
+      lastJsonMtime = fs.statSync(JSON_DB).mtimeMs;
+    } catch (e) {}
+  } catch (err) {
+    console.error('Failed to write database.json:', err);
+  }
+}
+
+function rowsOf(ws, name) {
+  if (!ws) return [];
+  const map = {};
+  ws.getRow(1).eachCell({ includeEmpty: false }, (c, n) => { map[String(plain(c.value)).trim()] = n; });
+  const out = [];
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r), o = {};
+    for (const k of COLS[name]) o[k] = DISPLAY_ONLY.has(k) || !map[k] ? '' : plain(row.getCell(map[k]).value);
+    if (o[COLS[name][0]] !== '') out.push(o);
+  }
+  return out;
+}
+
+async function loadWorkbookRaw() {
+  if (!fs.existsSync(DB_PATH)) {
+    const seed = path.join(__dirname, 'shared', 'CallerID-Database.xlsx');
+    if (fs.existsSync(seed)) {
+      try {
+        fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+        fs.copyFileSync(seed, DB_PATH);
+      } catch (e) {}
+    }
+  }
+  if (!fs.existsSync(DB_PATH)) return EMPTY();
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(DB_PATH);
+  return {
+    packages: rowsOf(wb.getWorksheet(PREFIX + 'Packages'), 'Packages'),
+    requests: rowsOf(wb.getWorksheet(PREFIX + 'Requests'), 'Requests'),
+    numbers: rowsOf(wb.getWorksheet(PREFIX + 'Numbers'), 'Numbers'),
+    files: rowsOf(wb.getWorksheet(PREFIX + 'Files'), 'Files')
+  };
+}
+
 function initStorage() {
   try {
     fs.mkdirSync(STORAGE_DIR, { recursive: true });
     fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+    fs.mkdirSync(SHARED_DIR, { recursive: true });
 
     // Pre-load bundled logos into memoryFiles so they are always in memory & never 404
     const logoDirs = [
@@ -68,20 +158,28 @@ function initStorage() {
       }
     });
 
-    if (IS_VERCEL) {
-      const seedDb = path.join(__dirname, 'shared', 'CallerID-Database.xlsx');
-      if (fs.existsSync(seedDb) && !fs.existsSync(DB_PATH)) {
-        fs.copyFileSync(seedDb, DB_PATH);
+    // Initialize or load state from JSON_DB
+    if (fs.existsSync(JSON_DB)) {
+      try {
+        const raw = fs.readFileSync(JSON_DB, 'utf8');
+        memoryState = JSON.parse(raw);
+        lastJsonMtime = fs.statSync(JSON_DB).mtimeMs;
+      } catch (e) {
+        console.warn('database.json parse error, will recover from workbook:', e.message);
+        memoryState = null;
       }
-      const seedStorage = path.join(__dirname, 'shared', 'storage', 'logos');
-      if (fs.existsSync(seedStorage)) {
-        const files = fs.readdirSync(seedStorage);
-        files.forEach(f => {
-          const dest = path.join(STORAGE_DIR, f);
-          if (!fs.existsSync(dest)) {
-            try { fs.copyFileSync(path.join(seedStorage, f), dest); } catch (e) {}
-          }
-        });
+    }
+
+    if (!memoryState || !memoryState.packages) {
+      if (fs.existsSync(DB_PATH)) {
+        // Asynchronous init will populate when ready, or fall back to empty
+        memoryState = EMPTY();
+      } else {
+        const seedDb = path.join(__dirname, 'shared', 'CallerID-Database.xlsx');
+        if (fs.existsSync(seedDb) && !fs.existsSync(DB_PATH)) {
+          try { fs.copyFileSync(seedDb, DB_PATH); } catch (e) {}
+        }
+        memoryState = EMPTY();
       }
     }
   } catch (e) {
@@ -90,59 +188,159 @@ function initStorage() {
 }
 initStorage();
 
-const COLS = {
-  Packages: ['packageId', 'name', 'capacity', 'pricePHP', 'brand', 'tagline', 'logoIncluded', 'status', 'createdAt'],
-  Requests: ['requestId', 'packageId', 'brandName', 'tagline', 'status', 'logoFileId', 'createdAt', 'departments', 'numbersCount', 'monthlyFeePHP', 'vatPHP', 'totalPHP', 'logoLink', 'preview'],
-  Numbers: ['numberId', 'requestId', 'brandName', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'status', 'createdAt'],
-  Files: ['fileId', 'requestId', 'originalName', 'storedName', 'storagePath', 'url', 'mimeType', 'sizeBytes', 'sha256', 'uploadedBy', 'uploadedAt', 'preview'],
-};
-const MONEY = new Set(['pricePHP', 'monthlyFeePHP', 'vatPHP', 'totalPHP']);     // shown as ₱1,234.00 in Excel
-const PESO_FMT = '"₱"#,##0.00';
-const DISPLAY_ONLY = new Set(['logoLink', 'preview']);
-const EXCEL_IMG = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' };
-const LINK_FONT = { color: { argb: 'FF0563C1' }, underline: true };
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const newId = p => `${p}-${crypto.randomBytes(4).toString('hex')}`;
-
-const plain = v => {
-  if (v instanceof Date) return v.toISOString();
-  if (v && typeof v === 'object') {
-    if ('hyperlink' in v) return v.hyperlink;
-    if ('result' in v) return v.result ?? '';
-    if (v.richText) return v.richText.map(t => t.text).join('');
-  }
-  return v ?? '';
-};
-
-// ---------- cross-process lock (two websites, one workbook) ----------
+// ---------- cross-process lock (multiple websites, one workbook) ----------
 async function acquire() {
   const t0 = Date.now();
   for (;;) {
-    try { const fd = fs.openSync(LOCK, 'wx'); fs.writeSync(fd, String(process.pid)); fs.closeSync(fd); return; }
-    catch (e) {
+    try {
+      const fd = fs.openSync(LOCK, 'wx');
+      fs.writeSync(fd, String(process.pid));
+      fs.closeSync(fd);
+      return;
+    } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      try { if (Date.now() - fs.statSync(LOCK).mtimeMs > 30000) fs.unlinkSync(LOCK); } catch (x) {}   // stale lock from a crash
+      try {
+        if (Date.now() - fs.statSync(LOCK).mtimeMs > 30000) fs.unlinkSync(LOCK);
+      } catch (x) {} // stale lock from a crash
       if (Date.now() - t0 > 20000) throw new Error('database is busy, try again');
       await sleep(25 + Math.random() * 40);
     }
   }
 }
-async function withDbLock(fn) { await acquire(); try { return await fn(); } finally { try { fs.unlinkSync(LOCK); } catch (e) {} } }
+
+async function withDbLock(fn) {
+  await acquire();
+  try {
+    return await fn();
+  } finally {
+    try { fs.unlinkSync(LOCK); } catch (e) {}
+  }
+}
 
 // ---------- journal ----------
 function readJournal() {
   if (!fs.existsSync(JOURNAL)) return [];
   return fs.readFileSync(JOURNAL, 'utf8').split('\n').filter(Boolean).map((line, index) => {
     try { return JSON.parse(line); }
-    catch (e) { throw new Error(`Invalid JSON in pending database journal at line ${index + 1}: ${e.message}`); }
-  });
+    catch (e) { console.warn(`Skipping invalid JSON in journal at line ${index + 1}: ${e.message}`); return null; }
+  }).filter(Boolean);
 }
+
+function applyToState(s, e) {
+  if (!s || !e) return;
+  if (!s.packages) s.packages = [];
+  if (!s.requests) s.requests = [];
+  if (!s.numbers) s.numbers = [];
+  if (!s.files) s.files = [];
+
+  if (e.t === 'pkg') {
+    const existingIdx = s.packages.findIndex(p => p.packageId === e.row.packageId);
+    if (existingIdx >= 0) {
+      s.packages[existingIdx] = { ...s.packages[existingIdx], ...e.row };
+    } else {
+      s.packages.push({ ...e.row });
+    }
+  }
+  if (e.t === 'pkg-update') {
+    const p = s.packages.find(x => x.packageId === e.row.packageId);
+    if (p) Object.assign(p, e.row);
+  }
+  if (e.t === 'pkg-remove') {
+    const p = s.packages.find(x => x.packageId === e.packageId);
+    if (p) {
+      p.status = 'removed';
+    } else {
+      // Record removal placeholder so it stays removed
+      s.packages.push({ packageId: e.packageId, status: 'removed' });
+    }
+  }
+  if (e.t === 'req') {
+    const existingReq = s.requests.find(r => r.requestId === e.row.requestId);
+    if (!existingReq) {
+      s.requests.push({ ...e.row });
+    } else {
+      Object.assign(existingReq, e.row);
+    }
+    if (e.file && !s.files.some(f => f.fileId === e.file.fileId)) s.files.push({ ...e.file });
+    for (const n of e.numbers || []) {
+      const existingNum = s.numbers.find(x => x.numberId === n.numberId);
+      if (!existingNum) {
+        s.numbers.push({ ...n });
+      } else {
+        Object.assign(existingNum, n);
+      }
+    }
+  }
+  if (e.t === 'status') {
+    const r = s.requests.find(x => x.requestId === e.requestId);
+    if (r) r.status = e.status;
+    s.numbers.forEach(n => {
+      if (n.requestId === e.requestId) n.status = e.status;
+    });
+  }
+}
+
+async function ensureMemoryLoaded() {
+  if (memoryState && memoryState.packages && memoryState.packages.length > 0) {
+    // Check if JSON_DB was touched by another process
+    if (fs.existsSync(JSON_DB)) {
+      try {
+        const st = fs.statSync(JSON_DB);
+        if (st.mtimeMs > lastJsonMtime) {
+          const raw = fs.readFileSync(JSON_DB, 'utf8');
+          memoryState = JSON.parse(raw);
+          lastJsonMtime = st.mtimeMs;
+        }
+      } catch (e) {}
+    }
+    return memoryState;
+  }
+
+  // Load from JSON_DB if available
+  if (fs.existsSync(JSON_DB)) {
+    try {
+      const raw = fs.readFileSync(JSON_DB, 'utf8');
+      memoryState = JSON.parse(raw);
+      lastJsonMtime = fs.statSync(JSON_DB).mtimeMs;
+      if (memoryState && memoryState.packages) return memoryState;
+    } catch (e) {}
+  }
+
+  // Load from Excel workbook
+  try {
+    memoryState = await loadWorkbookRaw();
+    readError = null;
+  } catch (e) {
+    readError = e.message;
+    memoryState = EMPTY();
+  }
+
+  // Apply any pending journal entries
+  const pending = readJournal();
+  if (pending.length > 0) {
+    for (const e of pending) applyToState(memoryState, e);
+  }
+
+  // Persist the combined authoritative state to JSON_DB
+  saveStateToJson(memoryState);
+  return memoryState;
+}
+
 async function enqueue(entry) {
   if (USE_MONGO) {
     await ensureMongo();
     await mongoStore.enqueue(entry);
     return;
   }
+
+  // 1. Immediately apply to authoritative in-memory state
+  const state = await ensureMemoryLoaded();
+  applyToState(state, entry);
+
+  // 2. Immediately write to durable JSON database
+  saveStateToJson(state);
+
+  // 3. Append to journal file with lock
   await withDbLock(async () => {
     const fd = fs.openSync(JOURNAL, 'a');
     try {
@@ -152,17 +350,19 @@ async function enqueue(entry) {
       fs.closeSync(fd);
     }
   });
+
+  // 4. Flush to Excel workbook
   if (IS_VERCEL) {
-    await flush(true);
+    try { await flush(true); } catch (e) {}
   } else {
-    scheduleFlush(150);
+    scheduleFlush(50);
   }
 }
 
 async function ensureMongo() {
   if (!mongoInitialization) {
     mongoInitialization = (async () => {
-      const seed = await loadWorkbookState();
+      const seed = await ensureMemoryLoaded();
       const fileBuffers = new Map();
       for (const file of seed.files) {
         const fullPath = path.join(SHARED_DIR, file.storagePath || '');
@@ -179,68 +379,24 @@ async function ensureMongo() {
   return mongoInitialization;
 }
 
-// ---------- reading the workbook (cached until the file changes) ----------
-const EMPTY = () => ({ packages: [], requests: [], numbers: [], files: [] });
-let cache = { key: null, state: EMPTY() }, loading = null, readError = null;
-function rowsOf(ws, name) {
-  if (!ws) return [];
-  const map = {};
-  ws.getRow(1).eachCell({ includeEmpty: false }, (c, n) => { map[String(plain(c.value)).trim()] = n; });
-  const out = [];
-  for (let r = 2; r <= ws.rowCount; r++) {
-    const row = ws.getRow(r), o = {};
-    for (const k of COLS[name]) o[k] = DISPLAY_ONLY.has(k) || !map[k] ? '' : plain(row.getCell(map[k]).value);
-    if (o[COLS[name][0]] !== '') out.push(o);
-  }
-  return out;
-}
-async function loadWorkbookState() {
-  let st; try { st = fs.statSync(DB_PATH); } catch (e) { cache = { key: null, state: EMPTY() }; return cache.state; }
-  const key = st.mtimeMs + ':' + st.size;
-  if (cache.key === key) return cache.state;
-  if (!loading) loading = (async () => {
-    try {
-      const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(DB_PATH);
-      cache = { key, state: { packages: rowsOf(wb.getWorksheet(PREFIX + 'Packages'), 'Packages'), requests: rowsOf(wb.getWorksheet(PREFIX + 'Requests'), 'Requests'), numbers: rowsOf(wb.getWorksheet(PREFIX + 'Numbers'), 'Numbers'), files: rowsOf(wb.getWorksheet(PREFIX + 'Files'), 'Files') } };
-      readError = null;
-    } catch (e) { readError = e.message; }     // keep the last good copy
-    finally { loading = null; }
-  })();
-  await loading; return cache.state;
-}
-function applyToState(s, e) {
-  if (e.t === 'pkg' && !s.packages.some(p => p.packageId === e.row.packageId)) s.packages.push({ ...e.row });
-  if (e.t === 'pkg-update') {
-    const p = s.packages.find(x => x.packageId === e.row.packageId);
-    if (p) Object.assign(p, e.row);
-  }
-  if (e.t === 'pkg-remove') {
-    const p = s.packages.find(x => x.packageId === e.packageId);
-    if (p) p.status = 'removed';
-  }
-  if (e.t === 'req') {
-    if (!s.requests.some(r => r.requestId === e.row.requestId)) s.requests.push({ ...e.row });
-    if (e.file && !s.files.some(f => f.fileId === e.file.fileId)) s.files.push({ ...e.file });
-    for (const n of e.numbers || []) if (!s.numbers.some(x => x.numberId === n.numberId)) s.numbers.push({ ...n });
-  }
-  if (e.t === 'status') {
-    const r = s.requests.find(x => x.requestId === e.requestId); if (r) r.status = e.status;
-    s.numbers.forEach(n => { if (n.requestId === e.requestId) n.status = e.status; });
-  }
-}
-async function readAll() {           // workbook + changes still waiting in the journal
+async function readAll() {
   if (USE_MONGO) {
     await ensureMongo();
     return mongoStore.readAll();
   }
-  const s = JSON.parse(JSON.stringify(await loadWorkbookState()));
+
+  const rawState = await ensureMemoryLoaded();
+  const s = JSON.parse(JSON.stringify(rawState));
+
+  // Also apply any changes that might be pending in the journal from other processes
   for (const e of readJournal()) applyToState(s, e);
+
+  // Ensure file URLs and dataUrls are populated
   s.files = (s.files || []).map(f => {
     const mem = memoryFiles.get(f.fileId);
     if (mem && mem.dataUrl) {
       return { ...f, dataUrl: mem.dataUrl };
     }
-    // Attempt disk read to populate memory cache & dataUrl
     let full = path.join(SHARED_DIR, f.storagePath || '');
     if (!fs.existsSync(full)) full = path.join(__dirname, 'shared', f.storagePath || '');
     if (fs.existsSync(full)) {
@@ -253,6 +409,7 @@ async function readAll() {           // workbook + changes still waiting in the 
     }
     return f;
   });
+
   return s;
 }
 
@@ -264,7 +421,7 @@ async function getStoredFile(fileId) {
   return file;
 }
 
-// ---------- writing into the SAME workbook ----------
+// ---------- writing into the workbook ----------
 function ensureSheet(wb, name) {
   let ws = wb.getWorksheet(PREFIX + name);
   if (!ws) {
@@ -275,29 +432,45 @@ function ensureSheet(wb, name) {
   }
   return ws;
 }
-function colIdx(ws, name) {         // finds the column by its header (so you may reorder columns); adds it if missing
+
+function colIdx(ws, name) {
   let found = 0, last = 0;
-  ws.getRow(1).eachCell({ includeEmpty: false }, (c, n) => { last = Math.max(last, n); if (String(plain(c.value)).trim() === name) found = n; });
+  ws.getRow(1).eachCell({ includeEmpty: false }, (c, n) => {
+    last = Math.max(last, n);
+    if (String(plain(c.value)).trim() === name) found = n;
+  });
   if (found) return found;
-  const n = last + 1, c = ws.getRow(1).getCell(n); c.value = name; c.font = { bold: true };
-  ws.getColumn(n).width = Math.max(14, name.length + 4); return n;
+  const n = last + 1, c = ws.getRow(1).getCell(n);
+  c.value = name;
+  c.font = { bold: true };
+  ws.getColumn(n).width = Math.max(14, name.length + 4);
+  return n;
 }
+
 function findRow(ws, col, value) {
-  for (let r = 2; r <= ws.rowCount; r++) if (String(plain(ws.getRow(r).getCell(col).value)) === String(value)) return r;
+  for (let r = 2; r <= ws.rowCount; r++) {
+    if (String(plain(ws.getRow(r).getCell(col).value)) === String(value)) return r;
+  }
   return 0;
 }
+
 function newRow(ws, name, obj) {
   const rowNo = (ws.lastRow ? ws.lastRow.number : 0) + 1, row = ws.getRow(rowNo);
-  for (const k of COLS[name]) if (!DISPLAY_ONLY.has(k) && obj[k] !== undefined) {
-    const c = row.getCell(colIdx(ws, k)); c.value = obj[k];
-    if (MONEY.has(k)) c.numFmt = PESO_FMT;
+  for (const k of COLS[name]) {
+    if (!DISPLAY_ONLY.has(k) && obj[k] !== undefined) {
+      const c = row.getCell(colIdx(ws, k));
+      c.value = obj[k];
+      if (MONEY.has(k)) c.numFmt = PESO_FMT;
+    }
   }
   return rowNo;
 }
-function imageIndex(wb, buffer, extension) {       // identical logo = stored once in the workbook
+
+function imageIndex(wb, buffer, extension) {
   const i = wb.media.findIndex(m => m.buffer && Buffer.compare(Buffer.from(m.buffer), buffer) === 0);
   return i >= 0 ? i : wb.addImage({ buffer, extension });
 }
+
 function preview(wb, ws, rowNo, col, file) {
   const ext = file && EXCEL_IMG[file.mimeType];
   const mem = file && memoryFiles.get(file.fileId);
@@ -314,10 +487,25 @@ function preview(wb, ws, rowNo, col, file) {
   }
   ws.getRow(rowNo).height = 48;
 }
+
 const link = (cell, url) => { cell.value = { text: 'Open file', hyperlink: url }; cell.font = LINK_FONT; };
+
 function applyToWorkbook(wb, e) {
   const P = ensureSheet(wb, 'Packages'), R = ensureSheet(wb, 'Requests'), N = ensureSheet(wb, 'Numbers'), F = ensureSheet(wb, 'Files');
-  if (e.t === 'pkg' && !findRow(P, colIdx(P, 'packageId'), e.row.packageId)) newRow(P, 'Packages', e.row);
+  if (e.t === 'pkg') {
+    const existing = findRow(P, colIdx(P, 'packageId'), e.row.packageId);
+    if (!existing) {
+      newRow(P, 'Packages', e.row);
+    } else {
+      for (const k of COLS.Packages) {
+        if (k !== 'packageId' && e.row[k] !== undefined) {
+          const cell = P.getRow(existing).getCell(colIdx(P, k));
+          cell.value = e.row[k];
+          if (MONEY.has(k)) cell.numFmt = PESO_FMT;
+        }
+      }
+    }
+  }
   if (e.t === 'pkg-update') {
     const rowNo = findRow(P, colIdx(P, 'packageId'), e.row.packageId);
     if (rowNo) {
@@ -332,7 +520,9 @@ function applyToWorkbook(wb, e) {
   }
   if (e.t === 'pkg-remove') {
     const rowNo = findRow(P, colIdx(P, 'packageId'), e.packageId);
-    if (rowNo) P.getRow(rowNo).getCell(colIdx(P, 'status')).value = 'removed';
+    if (rowNo) {
+      P.getRow(rowNo).getCell(colIdx(P, 'status')).value = 'removed';
+    }
   }
   if (e.t === 'req') {
     if (!findRow(R, colIdx(R, 'requestId'), e.row.requestId)) {
@@ -346,61 +536,129 @@ function applyToWorkbook(wb, e) {
     }
   }
   if (e.t === 'status') {
-    const n = findRow(R, colIdx(R, 'requestId'), e.requestId); if (n) R.getCell(n, colIdx(R, 'status')).value = e.status;
+    const n = findRow(R, colIdx(R, 'requestId'), e.requestId);
+    if (n) R.getCell(n, colIdx(R, 'status')).value = e.status;
     const rc = colIdx(N, 'requestId'), sc = colIdx(N, 'status');
-    for (let r = 2; r <= N.rowCount; r++) if (String(plain(N.getRow(r).getCell(rc).value)) === String(e.requestId)) N.getRow(r).getCell(sc).value = e.status;
+    for (let r = 2; r <= N.rowCount; r++) {
+      if (String(plain(N.getRow(r).getCell(rc).value)) === String(e.requestId)) {
+        N.getRow(r).getCell(sc).value = e.status;
+      }
+    }
   }
 }
+
 async function writeWorkbook(entries) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const wb = new ExcelJS.Workbook(); let mtime = null;
-    if (fs.existsSync(DB_PATH)) {
-      mtime = fs.statSync(DB_PATH).mtimeMs;
-      await wb.xlsx.readFile(DB_PATH);                       // unreadable file => throws => we never overwrite it
-      const bak = DB_PATH.replace(/(\.xlsx)?$/i, '.backup-before-sync.xlsx');
-      if (USER_DB && !fs.existsSync(bak)) fs.copyFileSync(DB_PATH, bak);   // your own workbook: original kept once
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const wb = new ExcelJS.Workbook();
+      let mtime = null;
+      if (fs.existsSync(DB_PATH)) {
+        mtime = fs.statSync(DB_PATH).mtimeMs;
+        await wb.xlsx.readFile(DB_PATH);
+        const bak = DB_PATH.replace(/(\.xlsx)?$/i, '.backup-before-sync.xlsx');
+        if (USER_DB && !fs.existsSync(bak)) {
+          try { fs.copyFileSync(DB_PATH, bak); } catch (e) {}
+        }
+      }
+      for (const e of entries) applyToWorkbook(wb, e);
+      wb.calcProperties = { ...(wb.calcProperties || {}), fullCalcOnLoad: true };
+
+      const tmp = `${DB_PATH}.${process.pid}.${Date.now()}.tmp`;
+      const buf = Buffer.from(await wb.xlsx.writeBuffer());
+      await fs.promises.writeFile(tmp, buf);
+
+      try {
+        await fs.promises.rename(tmp, DB_PATH);
+      } catch (renameErr) {
+        // Windows atomic replacement fallback
+        try {
+          fs.copyFileSync(tmp, DB_PATH);
+          await fs.promises.unlink(tmp).catch(() => {});
+        } catch (copyErr) {
+          await fs.promises.unlink(tmp).catch(() => {});
+          throw renameErr;
+        }
+      }
+      return;
+    } catch (err) {
+      if (attempt === 4) throw err;
+      await sleep(100 + attempt * 150);
     }
-    for (const e of entries) applyToWorkbook(wb, e);
-    wb.calcProperties = { ...(wb.calcProperties || {}), fullCalcOnLoad: true };   // your formulas recalculate on open
-    const tmp = DB_PATH + '.tmp';
-    await fs.promises.writeFile(tmp, Buffer.from(await wb.xlsx.writeBuffer()));
-    if (mtime !== null && fs.statSync(DB_PATH).mtimeMs !== mtime) { await fs.promises.unlink(tmp); continue; }   // you saved meanwhile: redo on your version
-    await fs.promises.rename(tmp, DB_PATH);                  // atomic; fails while Excel has the file open -> retried
-    return;
   }
-  throw new Error('the file kept changing, will try again');
 }
 
 // ---------- flushing the journal into the workbook ----------
-let flushTimer = null, flushInfo = { lastFlush: null, error: null };
-function scheduleFlush(ms = 150) { clearTimeout(flushTimer); flushTimer = setTimeout(flush, ms); }
+let flushTimer = null;
+let flushInfo = { lastFlush: null, error: null };
+
+function scheduleFlush(ms = 100) {
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flush, ms);
+}
+
 async function flush(required = false) {
   if (USE_MONGO) return;
   try {
     await withDbLock(async () => {
-      const entries = readJournal(); if (!entries.length) return;
+      const entries = readJournal();
+      if (!entries.length) return;
       await writeWorkbook(entries);
-      fs.writeFileSync(JOURNAL, '');                         // applied; entries are idempotent so a crash here is harmless
+      try { fs.writeFileSync(JOURNAL, ''); } catch (e) {}
       flushInfo = { lastFlush: new Date().toISOString(), error: null };
     });
   } catch (e) {
     const locked = ['EBUSY', 'EPERM', 'EACCES'].includes(e.code);
-    flushInfo.error = locked ? 'The Excel file is open in Excel (or locked).' : /zip|central directory/i.test(e.message) ? 'The database file is not a valid .xlsx workbook; it was left untouched.' : e.message;
-    console.error('Database flush failed:', e);
-    scheduleFlush(locked ? 3000 : 15000);
+    flushInfo.error = locked
+      ? 'The Excel file is currently open in Excel. Changes are saved in database.json and will sync to Excel once closed.'
+      : /zip|central directory/i.test(e.message)
+      ? 'The database file is not a valid .xlsx workbook; it was left untouched.'
+      : e.message;
+    console.warn('Workbook sync notice:', flushInfo.error);
+    scheduleFlush(locked ? 2000 : 5000);
     if (required) throw e;
   }
 }
+
 function startBackground() {
   if (USE_MONGO) return;
-  scheduleFlush(300);
-  setInterval(() => { try { if (fs.existsSync(JOURNAL) && fs.statSync(JOURNAL).size > 0) scheduleFlush(100); } catch (e) {} }, 3000);
+  scheduleFlush(200);
+  setInterval(() => {
+    try {
+      if (fs.existsSync(JOURNAL) && fs.statSync(JOURNAL).size > 0) scheduleFlush(50);
+    } catch (e) {}
+  }, 2000);
 }
+
 function getStatus() {
   if (USE_MONGO) {
     return mongoStore.status();
   }
-  return { database: DB_PATH, pending: readJournal().length, lastFlush: flushInfo.lastFlush, error: flushInfo.error, readError };
+  return {
+    database: DB_PATH,
+    jsonStore: JSON_DB,
+    pending: readJournal().length,
+    lastFlush: flushInfo.lastFlush,
+    error: flushInfo.error,
+    readError
+  };
 }
 
-module.exports = { cfg, COLS, SHARED_DIR, STORAGE_DIR, DB_PATH, newId, enqueue, readAll, readWorkbookSnapshot: loadWorkbookState, getStatus, startBackground, flush, saveInMemoryFile, getInMemoryFile, getStoredFile };
+module.exports = {
+  cfg,
+  COLS,
+  SHARED_DIR,
+  STORAGE_DIR,
+  DB_PATH,
+  JSON_DB,
+  newId,
+  enqueue,
+  readAll,
+  readWorkbookSnapshot: ensureMemoryLoaded,
+  getStatus,
+  startBackground,
+  flush,
+  saveInMemoryFile,
+  getInMemoryFile,
+  getStoredFile,
+  saveStateToJson
+};

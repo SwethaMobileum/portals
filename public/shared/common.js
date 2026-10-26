@@ -239,13 +239,125 @@ async function migrateLegacyPackageRemovals() {
 
 // ==========================================================================
 // Cross-Portal Synchronization & State Persistence (Vercel Serverless Resilient)
-// Prevents requests from disappearing when polling different lambda containers
+// Prevents requests and packages from disappearing across instances & tabs
 // ==========================================================================
 const MOBILEUM_SYNC_KEY = 'mobileum_persisted_requests';
 const MOBILEUM_STATUS_KEY = 'mobileum_status_overrides';
+const MOBILEUM_PACKAGES_KEY = 'mobileum_persisted_packages';
+const MOBILEUM_DELETED_PACKAGES_KEY = 'mobileum_deleted_packages';
 
 const syncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('mobileum_sync_channel') : null;
 
+// ---------- Package Persistence & Sync ----------
+function getClientPackages() {
+  try {
+    const raw = localStorage.getItem(MOBILEUM_PACKAGES_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr;
+    }
+  } catch (e) {}
+  return [];
+}
+
+function getDeletedPackageIds() {
+  const ids = new Set();
+  try {
+    const raw = localStorage.getItem(MOBILEUM_DELETED_PACKAGES_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) arr.forEach(id => ids.add(id));
+    }
+  } catch (e) {}
+  const shared = getSharedList('deleted_packages');
+  shared.forEach(id => ids.add(id));
+  return ids;
+}
+
+function saveClientPackage(pkg) {
+  if (!pkg || !pkg.packageId) return;
+  const list = getClientPackages();
+  const idx = list.findIndex(p => p.packageId === pkg.packageId);
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], ...pkg, status: 'published' };
+  } else {
+    list.push({ ...pkg, status: 'published' });
+  }
+  try {
+    localStorage.setItem(MOBILEUM_PACKAGES_KEY, JSON.stringify(list));
+  } catch (e) {}
+
+  // Remove from deleted list if re-added
+  const deleted = Array.from(getDeletedPackageIds()).filter(id => id !== pkg.packageId);
+  try {
+    localStorage.setItem(MOBILEUM_DELETED_PACKAGES_KEY, JSON.stringify(deleted));
+  } catch (e) {}
+  removeFromSharedList('deleted_packages', pkg.packageId);
+
+  if (syncChannel) {
+    try { syncChannel.postMessage({ type: 'package_update', packageId: pkg.packageId, package: pkg }); } catch (e) {}
+  }
+  syncWithServer();
+}
+
+function removeClientPackage(packageId) {
+  if (!packageId) return;
+  // Remove from persisted active list
+  const list = getClientPackages().filter(p => p.packageId !== packageId);
+  try {
+    localStorage.setItem(MOBILEUM_PACKAGES_KEY, JSON.stringify(list));
+  } catch (e) {}
+
+  // Add to permanently deleted set
+  const deleted = getDeletedPackageIds();
+  deleted.add(packageId);
+  const delArr = Array.from(deleted);
+  try {
+    localStorage.setItem(MOBILEUM_DELETED_PACKAGES_KEY, JSON.stringify(delArr));
+  } catch (e) {}
+  addToSharedList('deleted_packages', packageId);
+
+  if (syncChannel) {
+    try { syncChannel.postMessage({ type: 'package_delete', packageId }); } catch (e) {}
+  }
+  syncWithServer();
+}
+
+function mergePackages(serverPackages) {
+  const serverList = Array.isArray(serverPackages) ? serverPackages : [];
+  const clientList = getClientPackages();
+  const deletedIds = getDeletedPackageIds();
+
+  const map = new Map();
+
+  // 1. Ingest server packages (skip deleted/removed)
+  serverList.forEach(p => {
+    if (p && p.packageId && !deletedIds.has(p.packageId) && p.status !== 'removed') {
+      map.set(p.packageId, { ...p });
+    }
+  });
+
+  // 2. Ingest client-persisted packages (ensures plans survive cold starts & refreshes)
+  let missingFromServer = false;
+  clientList.forEach(p => {
+    if (!p || !p.packageId || deletedIds.has(p.packageId) || p.status === 'removed') return;
+    if (!map.has(p.packageId)) {
+      map.set(p.packageId, { ...p });
+      missingFromServer = true;
+    } else {
+      map.set(p.packageId, { ...map.get(p.packageId), ...p });
+    }
+  });
+
+  // Sync client packages to server if server was missing any
+  if (missingFromServer) {
+    syncWithServer();
+  }
+
+  return Array.from(map.values());
+}
+
+// ---------- Request Persistence & Sync ----------
 function getClientRequests() {
   try {
     const raw = localStorage.getItem(MOBILEUM_SYNC_KEY);
@@ -328,7 +440,7 @@ function mergeRequests(serverRequests) {
     }
   });
 
-  // 2. Ingest client requests (preserves newly submitted requests across cold lambda instances)
+  // 2. Ingest client requests (preserves newly submitted requests across instances)
   let missingFromServer = false;
   clientList.forEach(clientReq => {
     if (!clientReq || !clientReq.requestId) return;
@@ -419,14 +531,16 @@ function syncWithServer() {
     try {
       const requests = getClientRequests();
       const statusOverrides = getStatusOverrides();
-      if (!requests.length && !Object.keys(statusOverrides).length) return;
+      const packages = getClientPackages();
+      const deletedPackageIds = Array.from(getDeletedPackageIds());
+      if (!requests.length && !Object.keys(statusOverrides).length && !packages.length && !deletedPackageIds.length) return;
       await api('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requests, statusOverrides })
+        body: JSON.stringify({ requests, statusOverrides, packages, deletedPackageIds })
       });
     } catch (e) {
       // Non-blocking sync attempt
     }
-  }, 400);
+  }, 350);
 }

@@ -55,7 +55,8 @@ function classify(buf, originalName) {
 const truthy = v => v === true || v === 'true' || v === 1 || v === 'TRUE';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: MAX_BYTES }));
+app.use(express.urlencoded({ extended: true, limit: MAX_BYTES }));
 app.use('/shared', express.static(path.join(__dirname, 'public', 'shared')));
 
 if (IS_UNIFIED) {
@@ -126,12 +127,28 @@ app.get('/api/numbers', wrap(async (_req, res) => {
 }));
 app.get('/api/lookup', wrap(async (req, res) => res.json(lookup(await db.readAll(), req.query.number))));
 
-// OPERATOR: publish a package
-app.post('/api/packages', only('operator'), wrap(async (req, res) => {
+// Packages: operator sees all active, enterprise sees only published ones
+app.post('/api/packages', only('operator', 'enterprise'), wrap(async (req, res) => {
   const { name, capacity, pricePHP = 0, brand = true, tagline = false, logoIncluded = false } = req.body || {};
-  if (typeof name !== 'string' || !name.trim() || !Number.isInteger(capacity) || capacity <= 0) return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
-  if (typeof pricePHP !== 'number' || !isFinite(pricePHP) || pricePHP < 0) return res.status(400).json({ error: 'price must be an amount in Philippine pesos (₱), 0 or more' });
-  const row = { packageId: db.newId('PKG'), name: name.trim().slice(0, 80), capacity, pricePHP: PH.round2(pricePHP), brand: !!brand, tagline: !!tagline, logoIncluded: !!logoIncluded, status: 'published', createdAt: new Date().toISOString() };
+  const cap = Number(capacity);
+  if (typeof name !== 'string' || !name.trim() || !Number.isInteger(cap) || cap <= 0) {
+    return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
+  }
+  const price = typeof pricePHP === 'number' ? pricePHP : parseFloat(pricePHP || '0');
+  if (isNaN(price) || price < 0) {
+    return res.status(400).json({ error: 'price must be an amount in Philippine pesos (₱), 0 or more' });
+  }
+  const row = {
+    packageId: db.newId('PKG'),
+    name: name.trim().slice(0, 80),
+    capacity: cap,
+    pricePHP: PH.round2(price),
+    brand: truthy(brand),
+    tagline: truthy(tagline),
+    logoIncluded: truthy(logoIncluded),
+    status: 'published',
+    createdAt: new Date().toISOString()
+  };
   await db.enqueue({ t: 'pkg', row });
   res.status(201).json(row);
 }));
@@ -143,8 +160,8 @@ async function updatePackage(req, res) {
 
   const body = req.body || {};
   const name = body.name === undefined ? current.name : (typeof body.name === 'string' ? body.name.trim() : '');
-  const capacity = body.capacity === undefined ? Number(current.capacity) : body.capacity;
-  const pricePHP = body.pricePHP === undefined ? Number(current.pricePHP) : body.pricePHP;
+  const capacity = body.capacity === undefined ? Number(current.capacity) : Number(body.capacity);
+  const pricePHP = body.pricePHP === undefined ? Number(current.pricePHP) : Number(body.pricePHP);
   if (typeof name !== 'string' || !name || !Number.isInteger(capacity) || capacity <= 0) {
     return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
   }
@@ -157,16 +174,16 @@ async function updatePackage(req, res) {
     name: name.slice(0, 80),
     capacity,
     pricePHP: PH.round2(pricePHP),
-    brand: body.brand === undefined ? truthy(current.brand) : !!body.brand,
-    tagline: body.tagline === undefined ? truthy(current.tagline) : !!body.tagline,
-    logoIncluded: body.logoIncluded === undefined ? truthy(current.logoIncluded) : !!body.logoIncluded
+    brand: body.brand === undefined ? truthy(current.brand) : truthy(body.brand),
+    tagline: body.tagline === undefined ? truthy(current.tagline) : truthy(body.tagline),
+    logoIncluded: body.logoIncluded === undefined ? truthy(current.logoIncluded) : truthy(body.logoIncluded)
   };
   await db.enqueue({ t: 'pkg-update', row });
   res.json(row);
 }
 
-app.put('/api/packages/:id', only('operator'), wrap(updatePackage));
-app.patch('/api/packages/:id', only('operator'), wrap(updatePackage));
+app.put('/api/packages/:id', only('operator', 'enterprise'), wrap(updatePackage));
+app.patch('/api/packages/:id', only('operator', 'enterprise'), wrap(updatePackage));
 
 // Keep historical references valid while persistently removing plans from both portals.
 app.delete('/api/packages/:id', only('operator', 'enterprise'), wrap(async (req, res) => {
@@ -186,13 +203,46 @@ app.patch('/api/requests/:id/status', only('operator'), wrap(async (req, res) =>
   res.json({ requestId: req.params.id, status });
 }));
 
-// SERVERLESS SYNC: Re-hydrates requests and status overrides across cold/ephemeral Vercel lambda containers
+// SERVERLESS & CLIENT SYNC: Re-hydrates requests, status overrides, packages, and removals across instances
 app.post('/api/sync', wrap(async (req, res) => {
-  const { requests = [], statusOverrides = {} } = req.body || {};
+  const { requests = [], statusOverrides = {}, packages = [], deletedPackageIds = [] } = req.body || {};
   const s = await db.readAll();
   const existingReqIds = new Set(s.requests.map(r => r.requestId));
   let addedCount = 0;
+  let addedPkgCount = 0;
+  let deletedPkgCount = 0;
 
+  // Process package deletions first
+  const existingPkgs = new Map(s.packages.map(p => [p.packageId, p]));
+  for (const delId of deletedPackageIds) {
+    if (delId && existingPkgs.has(delId) && existingPkgs.get(delId).status !== 'removed') {
+      await db.enqueue({ t: 'pkg-remove', packageId: delId });
+      deletedPkgCount++;
+    }
+  }
+
+  // Process packages
+  for (const p of packages) {
+    if (!p || !p.packageId || deletedPackageIds.includes(p.packageId)) continue;
+    if (!existingPkgs.has(p.packageId)) {
+      const row = {
+        packageId: p.packageId,
+        name: String(p.name || '').trim().slice(0, 80),
+        capacity: Number(p.capacity) || 5,
+        pricePHP: PH.round2(Number(p.pricePHP) || 0),
+        brand: truthy(p.brand),
+        tagline: truthy(p.tagline),
+        logoIncluded: truthy(p.logoIncluded),
+        status: p.status || 'published',
+        createdAt: p.createdAt || new Date().toISOString()
+      };
+      await db.enqueue({ t: 'pkg', row });
+      existingPkgs.set(p.packageId, row);
+      addedPkgCount++;
+    }
+  }
+
+  // Process requests
   for (const r of requests) {
     if (!r || !r.requestId) continue;
     if (!existingReqIds.has(r.requestId)) {
@@ -243,7 +293,7 @@ app.post('/api/sync', wrap(async (req, res) => {
     }
   }
 
-  res.json({ ok: true, synced: addedCount });
+  res.json({ ok: true, syncedRequests: addedCount, syncedPackages: addedPkgCount, deletedPackages: deletedPkgCount });
 }));
 
 // ENTERPRISE: register a bank (official name + logo) with phone numbers per department (multipart; field "logo" + "departments" JSON)

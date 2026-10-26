@@ -320,6 +320,7 @@
             logoIncluded: $('pLogo').checked
           })
         });
+        saveClientPackage(p);
         m.className = 'msg good';
         m.textContent = (isEditing ? 'Updated ' : 'Published ') + p.name + ' at ' + peso(p.pricePHP) + ' / month';
         cancelPackageEdit();
@@ -371,6 +372,7 @@
         confirmClass: 'no',
         onConfirm: async () => {
           try {
+            removeClientPackage(pkgId);
             await api('/api/packages/' + encodeURIComponent(pkgId), { method: 'DELETE' });
             showToast('Package Removed', `Package "${pkgName}" was removed from both portals.`, 'info');
             await load();
@@ -922,7 +924,7 @@
           api('/api/numbers')
         ]);
 
-        allPackages = pk;
+        allPackages = mergePackages(pk);
         // Merge server requests with client-persisted requests so nothing disappears across lambda containers
         allRequests = mergeRequests(rq).slice().reverse();
         allNumbers = mergeNumbers(numRes);
@@ -952,7 +954,12 @@
 
     if (syncChannel) {
       syncChannel.onmessage = e => {
-        if (e.data && (e.data.type === 'sync_update' || e.data.type === 'status_override')) {
+        if (e.data && (
+          e.data.type === 'sync_update' ||
+          e.data.type === 'status_override' ||
+          e.data.type === 'package_update' ||
+          e.data.type === 'package_delete'
+        )) {
           load();
         }
       };
