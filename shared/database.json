@@ -123,6 +123,20 @@
       "logoIncluded": true,
       "status": "published",
       "createdAt": "2026-10-27T09:23:04.803Z"
+    },
+    {
+      "packageId": "PKG-69c8e7d6",
+      "name": "VIP Plan",
+      "capacity": 50,
+      "duration": "30 Days",
+      "pricePHP": 25000,
+      "brandedCalls": 50000,
+      "brand": true,
+      "callReason": true,
+      "tagline": true,
+      "logoIncluded": true,
+      "status": "published",
+      "createdAt": "2026-10-27T09:33:52.890Z"
     }
   ],
   "requests": [
