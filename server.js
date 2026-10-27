@@ -78,13 +78,25 @@ const wrap = fn => (req, res, next) => fn(req, res, next).catch(next);
 
 const activeStatus = st => st === 'pending' || st === 'approved';      // rejected registrations free their numbers
 function decorate(s) {
-  const files = Object.fromEntries(s.files.map(f => [f.fileId, f])), pk = Object.fromEntries(s.packages.map(p => [p.packageId, p]));
-  return s.requests.map(r => {
+  const files = Object.fromEntries((s.files || []).map(f => [f.fileId, f])), pk = Object.fromEntries((s.packages || []).map(p => [p.packageId, p]));
+  return (s.requests || []).map(r => {
     const f = files[r.logoFileId], p = pk[r.packageId];
-    const numbers = s.numbers.filter(n => n.requestId === r.requestId).map(n => ({ numberId: n.numberId, department: n.department, phoneE164: n.phoneE164, phoneDisplay: n.phoneDisplay, numberType: n.numberType, status: n.status }));
-    const logoUrl = f ? (f.dataUrl || `/api/files/${f.fileId}`) : null;
-    return { ...r, packageName: p ? p.name : '', numbers, fileName: f ? f.originalName : null, mimeType: f ? f.mimeType : null,
-      sizeBytes: f ? f.sizeBytes : null, previewable: f ? PREVIEWABLE.has(f.mimeType) && f.mimeType.startsWith('image/') : false, logoUrl };
+    const numbers = (s.numbers || []).filter(n => n.requestId === r.requestId).map(n => ({ numberId: n.numberId, department: n.department, phoneE164: n.phoneE164, phoneDisplay: n.phoneDisplay, numberType: n.numberType, status: n.status }));
+    const logoUrl = f ? `/api/files/${f.fileId}` : (r.logoUrl || null);
+    const callReason = r.callReason || r.tagline || '';
+    return {
+      ...r,
+      callReason,
+      tagline: callReason,
+      remarks: r.remarks || '',
+      packageName: p ? p.name : '',
+      numbers,
+      fileName: f ? f.originalName : null,
+      mimeType: f ? f.mimeType : null,
+      sizeBytes: f ? f.sizeBytes : null,
+      previewable: f ? PREVIEWABLE.has(f.mimeType) && f.mimeType.startsWith('image/') : false,
+      logoUrl
+    };
   });
 }
 // what a customer's phone would show for a number (the network looks the caller up in the operator's approved registry)
@@ -97,9 +109,10 @@ function lookup(s, input) {
   if (!hit) return { ...base, registered: false, reason: 'unregistered' };
   const q = reqOf(hit.requestId);
   if (q.status !== 'approved') return { ...base, registered: false, reason: 'pending', brandName: q.brandName };
-  const f = s.files.find(x => x.fileId === q.logoFileId);
-  const logoUrl = f && f.mimeType.startsWith('image/') && PREVIEWABLE.has(f.mimeType) ? (f.dataUrl || `/api/files/${f.fileId}`) : null;
-  return { ...base, registered: true, verified: true, brandName: q.brandName, tagline: q.tagline || '', department: hit.department, logoUrl };
+  const f = (s.files || []).find(x => x.fileId === q.logoFileId);
+  const logoUrl = f && f.mimeType && f.mimeType.startsWith('image/') && PREVIEWABLE.has(f.mimeType) ? `/api/files/${f.fileId}` : (q.logoUrl || null);
+  const callReason = q.callReason || q.tagline || '';
+  return { ...base, registered: true, verified: true, brandName: q.brandName, callReason, tagline: callReason, department: hit.department, logoUrl };
 }
 
 app.get('/api/info', (req, res) => {
@@ -117,7 +130,11 @@ app.get('/api/packages', wrap(async (req, res) => {
   const s = await db.readAll();
   const isEnterprise = ROLE === 'enterprise' || req.query.role === 'enterprise' || (req.headers.referer && req.headers.referer.includes('/enterprise'));
   res.set('Cache-Control', 'no-store');
-  res.json(s.packages.filter(p => p.status !== 'removed' && (!isEnterprise || p.status === 'published')));
+  res.json(s.packages.filter(p => p.status !== 'removed' && (!isEnterprise || p.status === 'published')).map(p => ({
+    ...p,
+    duration: p.duration || '30 Days',
+    brandedCalls: Number(p.brandedCalls) || (Number(p.capacity || 5) * 10000) || 50000
+  })));
 }));
 app.get('/api/requests', only('operator', 'enterprise'), wrap(async (_req, res) => res.json(decorate(await db.readAll()))));
 // registered numbers (the customer phone uses this to offer demo callers) and the caller-ID lookup
@@ -129,7 +146,7 @@ app.get('/api/lookup', wrap(async (req, res) => res.json(lookup(await db.readAll
 
 // Packages: operator sees all active, enterprise sees only published ones
 app.post('/api/packages', only('operator', 'enterprise'), wrap(async (req, res) => {
-  const { name, capacity, pricePHP = 0, brand = true, tagline = false, logoIncluded = false } = req.body || {};
+  const { name, capacity, duration = '30 Days', pricePHP = 0, brandedCalls, brand = true, callReason = true, tagline = true, logoIncluded = false } = req.body || {};
   const cap = Number(capacity);
   if (typeof name !== 'string' || !name.trim() || !Number.isInteger(cap) || cap <= 0) {
     return res.status(400).json({ error: 'name and a positive whole-number capacity are required' });
@@ -138,13 +155,17 @@ app.post('/api/packages', only('operator', 'enterprise'), wrap(async (req, res) 
   if (isNaN(price) || price < 0) {
     return res.status(400).json({ error: 'price must be an amount in Philippine pesos (₱), 0 or more' });
   }
+  const calls = Number(brandedCalls) || (cap * 10000) || 50000;
   const row = {
     packageId: db.newId('PKG'),
     name: name.trim().slice(0, 80),
     capacity: cap,
+    duration: String(duration || '30 Days').trim().slice(0, 30),
     pricePHP: PH.round2(price),
+    brandedCalls: calls,
     brand: truthy(brand),
-    tagline: truthy(tagline),
+    callReason: truthy(callReason !== undefined ? callReason : tagline),
+    tagline: truthy(callReason !== undefined ? callReason : tagline),
     logoIncluded: truthy(logoIncluded),
     status: 'published',
     createdAt: new Date().toISOString()
@@ -169,13 +190,17 @@ async function updatePackage(req, res) {
     return res.status(400).json({ error: 'price must be an amount in Philippine pesos (₱), 0 or more' });
   }
 
+  const calls = body.brandedCalls !== undefined ? Number(body.brandedCalls) : (Number(current.brandedCalls) || (capacity * 10000) || 50000);
   const row = {
     ...current,
     name: name.slice(0, 80),
     capacity,
+    duration: body.duration !== undefined ? String(body.duration).trim().slice(0, 30) : (current.duration || '30 Days'),
     pricePHP: PH.round2(pricePHP),
+    brandedCalls: calls,
     brand: body.brand === undefined ? truthy(current.brand) : truthy(body.brand),
-    tagline: body.tagline === undefined ? truthy(current.tagline) : truthy(body.tagline),
+    callReason: body.callReason !== undefined ? truthy(body.callReason) : (body.tagline !== undefined ? truthy(body.tagline) : truthy(current.callReason || current.tagline)),
+    tagline: body.callReason !== undefined ? truthy(body.callReason) : (body.tagline !== undefined ? truthy(body.tagline) : truthy(current.callReason || current.tagline)),
     logoIncluded: body.logoIncluded === undefined ? truthy(current.logoIncluded) : truthy(body.logoIncluded)
   };
   await db.enqueue({ t: 'pkg-update', row });
@@ -197,10 +222,14 @@ app.delete('/api/packages/:id', only('operator', 'enterprise'), wrap(async (req,
 
 // OPERATOR: approve / reject
 app.patch('/api/requests/:id/status', only('operator'), wrap(async (req, res) => {
-  const { status } = req.body || {};
+  const { status, remarks = '' } = req.body || {};
   if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'status must be approved or rejected' });
-  await db.enqueue({ t: 'status', requestId: req.params.id, status, at: new Date().toISOString() });
-  res.json({ requestId: req.params.id, status });
+  if (status === 'rejected' && (!remarks || !String(remarks).trim())) {
+    return res.status(400).json({ error: 'Rejection remarks are required when rejecting a brand request' });
+  }
+  const cleanRemarks = remarks ? String(remarks).trim().slice(0, 500) : '';
+  await db.enqueue({ t: 'status', requestId: req.params.id, status, remarks: cleanRemarks, at: new Date().toISOString() });
+  res.json({ requestId: req.params.id, status, remarks: cleanRemarks });
 }));
 
 // SERVERLESS & CLIENT SYNC: Re-hydrates requests, status overrides, packages, and removals across instances
@@ -246,13 +275,18 @@ app.post('/api/sync', wrap(async (req, res) => {
   for (const r of requests) {
     if (!r || !r.requestId) continue;
     if (!existingReqIds.has(r.requestId)) {
-      const finalStatus = statusOverrides[r.requestId] || r.status || 'pending';
+      const override = statusOverrides[r.requestId];
+      const finalStatus = typeof override === 'string' ? override : (override?.status || r.status || 'pending');
+      const finalRemarks = typeof override === 'object' ? (override?.remarks || '') : (r.remarks || '');
+      const callReason = r.callReason || r.tagline || '';
       const row = {
         requestId: r.requestId,
         packageId: r.packageId || '',
         brandName: r.brandName || '',
-        tagline: r.tagline || '',
+        callReason,
+        tagline: callReason,
         status: finalStatus,
+        remarks: finalRemarks,
         logoFileId: r.logoFileId || '',
         createdAt: r.createdAt || new Date().toISOString(),
         departments: r.departments || '',
@@ -287,27 +321,69 @@ app.post('/api/sync', wrap(async (req, res) => {
     }
   }
 
-  for (const [reqId, status] of Object.entries(statusOverrides)) {
+  for (const [reqId, override] of Object.entries(statusOverrides)) {
+    const status = typeof override === 'string' ? override : override?.status;
+    const remarks = typeof override === 'object' ? (override?.remarks || '') : '';
     if (['approved', 'rejected'].includes(status)) {
-      await db.enqueue({ t: 'status', requestId: reqId, status, at: new Date().toISOString() });
+      await db.enqueue({ t: 'status', requestId: reqId, status, remarks, at: new Date().toISOString() });
     }
   }
 
   res.json({ ok: true, syncedRequests: addedCount, syncedPackages: addedPkgCount, deletedPackages: deletedPkgCount });
 }));
 
-// ENTERPRISE: register a bank (official name + logo) with phone numbers per department (multipart; field "logo" + "departments" JSON)
-app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async (req, res) => {
-  const { packageId, tagline = '', uploadedBy = 'enterprise-user' } = req.body;
-  const brandName = String(req.body.brandName || '').trim().slice(0, 80);
-  if (!packageId || !brandName) return res.status(400).json({ error: 'The package and the official bank name are required' });
+// DEPARTMENT LINES ENDPOINTS
+app.get('/api/department-lines', wrap(async (_req, res) => {
   const s = await db.readAll();
-  const pkg = s.packages.find(p => p.packageId === packageId && p.status === 'published');
-  if (!pkg) return res.status(404).json({ error: 'package not found or not published' });
+  res.json(s.departmentLines || []);
+}));
+
+app.post('/api/department-lines', only('enterprise', 'operator'), wrap(async (req, res) => {
+  const { department, phoneE164, brandName = '' } = req.body || {};
+  if (!department || !phoneE164) {
+    return res.status(400).json({ error: 'Department and phone number are required' });
+  }
+  const r = PH.normalize(phoneE164);
+  if (!r.ok) return res.status(400).json({ error: r.error });
+  const row = {
+    lineId: req.body.lineId || db.newId('DLINE'),
+    department: String(department).trim().slice(0, 60),
+    phoneE164: r.e164,
+    phoneDisplay: r.display,
+    numberType: r.type,
+    brandName: String(brandName || '').trim().slice(0, 80),
+    updatedAt: new Date().toISOString()
+  };
+  await db.enqueue({ t: 'dept-line', row });
+  res.json(row);
+}));
+
+app.delete('/api/department-lines/:id', only('enterprise', 'operator'), wrap(async (req, res) => {
+  await db.enqueue({ t: 'dept-line-remove', lineId: req.params.id });
+  res.json({ ok: true, lineId: req.params.id });
+}));
+
+// ENTERPRISE: register a brand request with logo, call reason, departments and individual numbers
+app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async (req, res) => {
+  const { packageId, callReason = '', tagline = '', uploadedBy = 'enterprise-user' } = req.body;
+  const brandName = String(req.body.brandName || '').trim().slice(0, 80);
+  const finalCallReason = String(callReason || tagline || '').trim().slice(0, 120);
+  if (!brandName) return res.status(400).json({ error: 'Official brand name is required' });
+
+  const s = await db.readAll();
+  // If packageId is provided, validate it; otherwise use active published package if enterprise subscribed
+  let pkg = null;
+  if (packageId) {
+    pkg = s.packages.find(p => p.packageId === packageId && p.status === 'published');
+  }
+  if (!pkg) {
+    pkg = s.packages.find(p => p.status === 'published') || { name: 'Standard Pack', capacity: 500, pricePHP: 15000 };
+  }
 
   let deps; try { deps = JSON.parse(req.body.departments || '[]'); } catch (e) { deps = null; }
   if (!Array.isArray(deps) || !deps.length) return res.status(400).json({ error: 'Add at least one department with a phone number' });
-  if (deps.length > 10) return res.status(400).json({ error: 'A registration can have up to 10 departments' });
+  if (deps.length > 50) return res.status(400).json({ error: 'A registration can have up to 50 departments' });
+
   const reqStatus = id => (s.requests.find(r => r.requestId === id) || {}).status;
   const errors = [], seen = new Set(), numbers = [], requestId = db.newId('REQ'), now = new Date().toISOString();
   for (const d of deps) {
@@ -326,15 +402,20 @@ app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async 
     }
   }
   if (errors.length) return res.status(400).json({ error: 'Please fix the phone numbers', errors });
-  if (numbers.length > pkg.capacity) return res.status(400).json({ error: `The ${pkg.name} package allows up to ${pkg.capacity} numbers; you entered ${numbers.length}` });
+  if (pkg && numbers.length > pkg.capacity) return res.status(400).json({ error: `The ${pkg.name} package allows up to ${pkg.capacity} numbers; you entered ${numbers.length}` });
 
   let file = null;
   if (req.file) {
     if (!req.file.size) return res.status(400).json({ error: 'The uploaded file is empty' });
-    const type = classify(req.file.buffer, req.file.originalname);                 // VALIDATE
-    if (!type) return res.status(415).json({ error: 'This file type is blocked for security (programs and scripts)' });
-    const fileId = db.newId('FILE'), storedName = `${fileId}.${type.ext}`;         // STORE (server-made name)
+    if (req.file.size > 5 * 1024 * 1024) return res.status(400).json({ error: 'Logo file size exceeds 5MB limit' });
+
+    const type = classify(req.file.buffer, req.file.originalname);
+    if (!type || !['png', 'jpg', 'svg', 'webp'].includes(type.ext)) {
+      return res.status(400).json({ error: 'Only PNG, JPG, and SVG image files are allowed for brand logos' });
+    }
+    const fileId = db.newId('FILE'), storedName = `${fileId}.${type.ext}`;
     try {
+      fs.mkdirSync(db.STORAGE_DIR, { recursive: true });
       await fs.promises.writeFile(path.join(db.STORAGE_DIR, storedName), req.file.buffer);
     } catch (e) {
       console.warn('Could not write uploaded file to storage disk:', e.message);
@@ -345,19 +426,23 @@ app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async 
 
     file = {
       fileId, requestId, originalName: path.basename(req.file.originalname), storedName, storagePath: `storage/logos/${storedName}`,
-      url: `${OPERATOR_URL}/api/files/${fileId}`, mimeType: mime, sizeBytes: req.file.size,
+      url: `/api/files/${fileId}`, mimeType: mime, sizeBytes: req.file.size,
       sha256: crypto.createHash('sha256').update(req.file.buffer).digest('hex'), uploadedBy, uploadedAt: now,
       dataUrl
     };
   }
-  const f = PH.fee(pkg.pricePHP || 0);
-  const row = { requestId, packageId, brandName, tagline, status: 'pending', logoFileId: file ? file.fileId : '', createdAt: now,
-    departments: [...new Set(numbers.map(n => n.department))].join(', '), numbersCount: numbers.length, monthlyFeePHP: f.fee, vatPHP: f.vat, totalPHP: f.total };
-  await db.enqueue({ t: 'req', row, file, numbers });                                 // RECORD in the Excel workbook
-  res.status(201).json({ ...row, numbers, logoUrl: file ? (file.dataUrl || `/api/files/${file.fileId}`) : null });
+  const f = PH.fee(pkg ? (pkg.pricePHP || 0) : 0);
+  const row = {
+    requestId, packageId: pkg ? pkg.packageId : '', brandName,
+    callReason: finalCallReason, tagline: finalCallReason, status: 'pending', remarks: '',
+    logoFileId: file ? file.fileId : '', createdAt: now,
+    departments: [...new Set(numbers.map(n => n.department))].join(', '), numbersCount: numbers.length, monthlyFeePHP: f.fee, vatPHP: f.vat, totalPHP: f.total
+  };
+  await db.enqueue({ t: 'req', row, file, numbers });
+  res.status(201).json({ ...row, numbers, logoUrl: file ? `/api/files/${file.fileId}` : null });
 }));
 
-// both sites: retrieve the ORIGINAL file (inline if the browser can show it, otherwise download)
+// both sites: retrieve the ORIGINAL file (inline if previewable, with no-cache to avoid stale logos)
 app.get('/api/files/:id', wrap(async (req, res) => {
   const fileId = req.params.id;
 
@@ -369,7 +454,7 @@ app.get('/api/files/:id', wrap(async (req, res) => {
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
       'Content-Type': mem.mimeType,
       'Content-Length': mem.buffer.length,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'no-cache, must-revalidate',
       'Content-Disposition': `${dispo}; filename*=UTF-8''${encodeURIComponent(mem.originalName)}`,
       'X-Content-Type-Options': 'nosniff'
     });
@@ -383,17 +468,48 @@ app.get('/api/files/:id', wrap(async (req, res) => {
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
       'Content-Type': storedFile.mimeType,
       'Content-Length': storedFile.buffer.length,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'no-cache, must-revalidate',
       'Content-Disposition': `${dispo}; filename*=UTF-8''${encodeURIComponent(storedFile.originalName)}`,
       'X-Content-Type-Options': 'nosniff'
     });
     return res.send(storedFile.buffer);
   }
 
-  // 2. Check database files array & physical disk
+  // 2. Directly inspect STORAGE_DIR on disk
+  const searchDirs = [
+    db.STORAGE_DIR,
+    path.join(db.SHARED_DIR, 'storage', 'logos'),
+    path.join(__dirname, 'shared', 'storage', 'logos')
+  ];
+
+  for (const sDir of searchDirs) {
+    if (fs.existsSync(sDir)) {
+      try {
+        const entries = fs.readdirSync(sDir);
+        const match = entries.find(fn => fn === fileId || fn.startsWith(fileId + '.'));
+        if (match) {
+          const fullPath = path.join(sDir, match);
+          const bytes = await fs.promises.readFile(fullPath);
+          const ext = path.extname(match).slice(1).toLowerCase();
+          const mime = ext === 'svg' ? 'image/svg+xml' : (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png';
+          db.saveInMemoryFile(fileId, bytes, mime, match);
+          res.set({
+            'Content-Type': mime,
+            'Content-Length': bytes.length,
+            'Cache-Control': 'no-cache, must-revalidate',
+            'Content-Disposition': `inline; filename="${match}"`,
+            'X-Content-Type-Options': 'nosniff'
+          });
+          return res.send(bytes);
+        }
+      } catch (e) {}
+    }
+  }
+
+  // 3. Check database files array & physical disk
   const s = await db.readAll();
   const rec = (s.files || []).find(f => f.fileId === fileId);
-  if (rec) {
+  if (rec && rec.storagePath) {
     let full = path.join(db.SHARED_DIR, rec.storagePath);
     if (!fs.existsSync(full)) {
       full = path.join(__dirname, 'shared', rec.storagePath);
@@ -405,28 +521,8 @@ app.get('/api/files/:id', wrap(async (req, res) => {
         'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox",
         'Content-Type': rec.mimeType,
         'Content-Length': bytes.length,
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': 'no-cache, must-revalidate',
         'Content-Disposition': `${dispo}; filename*=UTF-8''${encodeURIComponent(rec.originalName)}`,
-        'X-Content-Type-Options': 'nosniff'
-      });
-      return res.send(bytes);
-    }
-  }
-
-  // 3. Fallback: On serverless/ephemeral environments where an uploaded file is not on this instance,
-  // serve the official Mobileum logo instead of returning a 404 error
-  const fallbackPaths = [
-    path.join(__dirname, 'public', 'shared', 'assets', 'mobileum-logo.png'),
-    path.join(__dirname, 'shared', 'storage', 'logos', 'FILE-07c47447.png')
-  ];
-  for (const fp of fallbackPaths) {
-    if (fs.existsSync(fp)) {
-      const bytes = await fs.promises.readFile(fp);
-      res.set({
-        'Content-Type': 'image/png',
-        'Content-Length': bytes.length,
-        'Cache-Control': 'public, max-age=300',
-        'Content-Disposition': 'inline; filename="logo.png"',
         'X-Content-Type-Options': 'nosniff'
       });
       return res.send(bytes);

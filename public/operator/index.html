@@ -98,6 +98,17 @@
           </div>
         </div>
 
+        <div class="row" style="margin-top:0;">
+          <div style="flex:1" class="form-group">
+            <label for="pDuration">Pack Duration</label>
+            <input id="pDuration" placeholder="e.g. 30 Days" value="30 Days">
+          </div>
+          <div style="flex:1" class="form-group">
+            <label for="pCalls">No. of Branded Calls</label>
+            <input id="pCalls" type="number" min="1000" step="1000" placeholder="e.g. 50000" value="50000">
+          </div>
+        </div>
+
         <div class="form-group">
           <label>Included Features</label>
           <div class="row" style="margin-top:6px;gap:20px;">
@@ -156,7 +167,6 @@
         <button class="filter-chip" data-filter="pending" onclick="setReqFilter('pending', this)">Pending (<span id="cnt_pending">0</span>)</button>
         <button class="filter-chip" data-filter="approved" onclick="setReqFilter('approved', this)">Approved (<span id="cnt_approved">0</span>)</button>
         <button class="filter-chip" data-filter="rejected" onclick="setReqFilter('rejected', this)">Rejected (<span id="cnt_rejected">0</span>)</button>
-        <button class="filter-chip" data-filter="trash" onclick="setReqFilter('trash', this)" style="color:var(--text-muted);">Trash (<span id="cnt_trash">0</span>)</button>
       </div>
 
       <div class="table-wrap">
@@ -296,6 +306,8 @@
       const name = $('pName').value.trim();
       const cap = Number($('pCap').value);
       const price = parseFloat($('pPrice').value || '0');
+      const duration = ($('pDuration')?.value || '30 Days').trim();
+      const calls = Number($('pCalls')?.value || 50000);
 
       if (!name) {
         m.className = 'msg err';
@@ -314,8 +326,11 @@
           body: JSON.stringify({
             name,
             capacity: cap,
+            duration,
+            brandedCalls: calls,
             pricePHP: price,
             brand: $('pBrand').checked,
+            callReason: $('pTag').checked,
             tagline: $('pTag').checked,
             logoIncluded: $('pLogo').checked
           })
@@ -343,8 +358,10 @@
       $('pName').value = p.name;
       $('pCap').value = p.capacity;
       $('pPrice').value = p.pricePHP;
+      if ($('pDuration')) $('pDuration').value = p.duration || '30 Days';
+      if ($('pCalls')) $('pCalls').value = p.brandedCalls || 50000;
       $('pBrand').checked = p.brand === true || p.brand === 'true';
-      $('pTag').checked = p.tagline === true || p.tagline === 'true';
+      $('pTag').checked = p.callReason === true || p.callReason === 'true' || p.tagline === true || p.tagline === 'true';
       $('pLogo').checked = p.logoIncluded === true || p.logoIncluded === 'true';
       $('btnPublish').textContent = 'Save Changes';
       $('btnCancelPackageEdit').style.display = 'inline-flex';
@@ -357,6 +374,8 @@
     function cancelPackageEdit() {
       editingPackageId = null;
       $('pName').value = '';
+      if ($('pDuration')) $('pDuration').value = '30 Days';
+      if ($('pCalls')) $('pCalls').value = '50000';
       $('btnPublish').textContent = 'Publish Package';
       $('btnCancelPackageEdit').style.display = 'none';
     }
@@ -367,7 +386,7 @@
       const pkgName = p ? p.name : pkgId;
       showConfirmModal({
         title: 'Remove Package',
-        message: `Are you sure you want to remove package "${pkgName}"? It will be hidden from the active package list and Enterprise registration plan options.`,
+        message: `Are you sure you want to remove package "${pkgName}"? It will be hidden from the active package list and Enterprise subscription options.`,
         confirmText: 'Remove Package',
         confirmClass: 'no',
         onConfirm: async () => {
@@ -383,56 +402,64 @@
       });
     }
 
-    // Remove Request (Image 3)
-    function removeRequest(reqId) {
+    // Modal & prompt for required rejection remarks
+    let pendingRejectReqId = null;
+
+    function promptReject(reqId) {
+      pendingRejectReqId = reqId;
       const r = allRequests.find(x => x.requestId === reqId);
-      const brandName = r ? r.brandName : reqId;
-      showConfirmModal({
-        title: 'Remove Request',
-        message: `Are you sure you want to remove request ${reqId} for "${brandName}"? This will cancel the application and release its phone numbers back to the network pool.`,
-        confirmText: 'Remove Request',
-        confirmClass: 'no',
-        onConfirm: async () => {
-          try {
-            if (r && r.status !== 'rejected') {
-              await api('/api/requests/' + reqId + '/status', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'rejected' })
-              });
-            }
-          } catch (e) {
-            console.warn('Status patch warning:', e);
-          }
-
-          addToSharedList('deleted_requests', reqId);
-          showToast('Request Removed', `Request ${reqId} has been removed.`, 'info');
-          closeDrawer();
-          await load();
-        }
-      });
+      const bankName = r ? r.brandName : reqId;
+      $('rejectModalBrand').textContent = bankName;
+      $('rejectRemarksInput').value = r && r.remarks ? r.remarks : '';
+      $('rejectRemarksErr').style.display = 'none';
+      validateRejectRemarks();
+      $('rejectModal').classList.add('open');
+      setTimeout(() => $('rejectRemarksInput').focus(), 150);
     }
 
-    // Restore Request
-    function restoreRequest(reqId) {
-      removeFromSharedList('deleted_requests', reqId);
-      showToast('Request Restored', `Request ${reqId} restored from trash.`, 'success');
-      load();
+    function closeRejectModal() {
+      $('rejectModal').classList.remove('open');
+      pendingRejectReqId = null;
     }
 
-    // Approve / Reject Request
-    async function decide(id, status) {
-      saveStatusOverride(id, status);
+    function validateRejectRemarks() {
+      const val = ($('rejectRemarksInput')?.value || '').trim();
+      const btn = $('btnConfirmReject');
+      if (btn) btn.disabled = !val;
+      if ($('rejectRemarksErr')) $('rejectRemarksErr').style.display = val ? 'none' : 'block';
+    }
+
+    async function submitRejectModal() {
+      const remarks = ($('rejectRemarksInput')?.value || '').trim();
+      if (!remarks) {
+        $('rejectRemarksErr').style.display = 'block';
+        $('btnConfirmReject').disabled = true;
+        return;
+      }
+      const reqId = pendingRejectReqId;
+      closeRejectModal();
+      await decide(reqId, 'rejected', remarks);
+    }
+
+    // Approve / Reject Request (Strictly Approve and Reject only)
+    async function decide(id, status, remarks = '') {
+      if (status === 'rejected' && (!remarks || !remarks.trim())) {
+        promptReject(id);
+        return;
+      }
+
+      saveStatusOverride(id, status, remarks);
       try {
         await api('/api/requests/' + id + '/status', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status })
+          body: JSON.stringify({ status, remarks: remarks ? remarks.trim() : '' })
         });
         showToast(
-          status === 'approved' ? 'Request Approved' : 'Request Rejected',
-          `Request ${id} has been ${status}. Numbers are now ${status === 'approved' ? 'active' : 'released'}.`,
-          status === 'approved' ? 'success' : 'warning'
+          status === 'approved' ? 'Brand Approved & Live' : 'Brand Request Rejected',
+          `Request ${id} is now ${status}.${status === 'approved' ? ' Caller ID is immediately live across the network.' : ' Remarks sent to enterprise.'}`,
+          status === 'approved' ? 'success' : 'warning',
+          6000
         );
         closeDrawer();
         await load();
@@ -465,38 +492,31 @@
 
     function filterRequests() {
       const query = ($('reqSearch')?.value || '').toLowerCase().trim();
-      const deletedReqs = getSharedList('deleted_requests');
 
       let filtered = allRequests.filter(r => {
-        const isDeleted = deletedReqs.includes(r.requestId);
-        if (activeFilter === 'trash') {
-          if (!isDeleted) return false;
-        } else {
-          if (isDeleted) return false;
-          if (activeFilter !== 'all' && r.status !== activeFilter) return false;
-        }
+        if (activeFilter !== 'all' && r.status !== activeFilter) return false;
 
         if (!query) return true;
         const inBank = (r.brandName || '').toLowerCase().includes(query);
         const inId = (r.requestId || '').toLowerCase().includes(query);
         const inDept = (r.departments || '').toLowerCase().includes(query);
+        const inReason = (r.callReason || r.tagline || '').toLowerCase().includes(query);
         const inNums = (r.numbers || []).some(n => (n.phoneDisplay || '').includes(query) || (n.phoneE164 || '').includes(query));
-        return inBank || inId || inDept || inNums;
+        return inBank || inId || inDept || inReason || inNums;
       });
       renderRequestsTable(filtered);
     }
 
     function renderRequestsTable(reqs) {
       const tbody = $('reqsTableBody');
-      const deletedReqs = getSharedList('deleted_requests');
 
       if (!reqs.length) {
         tbody.innerHTML = `
           <tr>
             <td colspan="8" class="empty-state">
-              <div class="empty-state-icon">${activeFilter === 'trash' ? '🗑️' : '📋'}</div>
-              <div class="empty-state-title">${activeFilter === 'trash' ? 'Trash is empty' : 'No requests found'}</div>
-              <div class="empty-state-desc">${activeFilter === 'trash' ? 'No removed requests in trash.' : 'There are no registration requests matching your current filter.'}</div>
+              <div class="empty-state-icon">📋</div>
+              <div class="empty-state-title">No brand requests found</div>
+              <div class="empty-state-desc">There are no brand requests matching your current filter.</div>
             </td>
           </tr>
         `;
@@ -504,11 +524,11 @@
       }
 
       tbody.innerHTML = reqs.map(r => {
-        const isDeleted = deletedReqs.includes(r.requestId);
         const logo = r.logoUrl && r.previewable
-          ? `<img src="${esc(r.logoUrl)}" alt="Logo" style="width:28px;height:28px;object-fit:contain;border-radius:4px;border:1px solid var(--border);" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">`
-          : `<div style="width:28px;height:28px;border-radius:4px;background:#F0F3FF;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#0000FF;">${esc(initials(r.brandName))}</div>`;
+          ? `<img src="${esc(r.logoUrl)}" alt="Logo" style="width:32px;height:32px;object-fit:contain;border-radius:6px;border:1px solid var(--border);" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">`
+          : `<div style="width:32px;height:32px;border-radius:6px;background:#F0F3FF;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#0000FF;">${esc(initials(r.brandName))}</div>`;
         const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+        const reason = r.callReason || r.tagline || '';
 
         return `
           <tr class="clickable" onclick="openRequestDrawer('${esc(r.requestId)}')">
@@ -518,7 +538,7 @@
                 ${logo}
                 <div>
                   <div style="font-weight:600;color:var(--deep-navy);">${esc(r.brandName)}</div>
-                  ${r.tagline ? `<div class="hint">${esc(r.tagline)}</div>` : ''}
+                  ${reason ? `<div class="hint" style="font-style:italic;color:var(--text-secondary);">"${esc(reason)}"</div>` : ''}
                 </div>
               </div>
             </td>
@@ -526,22 +546,14 @@
             <td><strong>${r.numbersCount || (r.numbers && r.numbers.length) || 0}</strong> numbers</td>
             <td class="peso" style="font-weight:600;">${peso(r.totalPHP)}</td>
             <td class="hint">${esc(dateStr)}</td>
-            <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span></td>
             <td>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <button class="btn sm" onclick="event.stopPropagation();openRequestDrawer('${esc(r.requestId)}')">
-                  Review &rarr;
-                </button>
-                ${isDeleted ? `
-                  <button class="btn sm ok" onclick="event.stopPropagation();restoreRequest('${esc(r.requestId)}')">
-                    Restore
-                  </button>
-                ` : `
-                  <button class="btn sm no" onclick="event.stopPropagation();removeRequest('${esc(r.requestId)}')">
-                    Remove
-                  </button>
-                `}
-              </div>
+              <span class="badge ${esc(r.status)}">${esc(r.status)}</span>
+              ${r.status === 'rejected' && r.remarks ? `<div class="hint" style="color:var(--status-rejected);font-size:10.5px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.remarks)}">Note: ${esc(r.remarks)}</div>` : ''}
+            </td>
+            <td>
+              <button class="btn sm" onclick="event.stopPropagation();openRequestDrawer('${esc(r.requestId)}')">
+                Review &rarr;
+              </button>
             </td>
           </tr>
         `;
@@ -554,26 +566,23 @@
       if (!r) return;
       selectedReq = r;
 
-      const deletedReqs = getSharedList('deleted_requests');
-      const isDeleted = deletedReqs.includes(r.requestId);
-
       $('drawerBankName').textContent = r.brandName;
       $('drawerReqId').textContent = r.requestId + ' · ' + (r.packageName || 'Package');
 
       const logoHtml = r.logoUrl
         ? `
           <div style="display:flex;align-items:center;gap:16px;padding:12px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-md);">
-            <div style="width:60px;height:60px;border-radius:var(--radius-sm);background:#FFFFFF;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex:none;">
+            <div style="width:64px;height:64px;border-radius:var(--radius-sm);background:#FFFFFF;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex:none;">
               <img src="${esc(r.logoUrl)}" alt="Logo" style="max-width:100%;max-height:100%;object-fit:contain;" onerror="this.onerror=null;this.src='/shared/assets/mobileum-logo.png';">
             </div>
             <div style="flex:1;min-width:0;">
               <div style="font-weight:600;font-size:13px;color:var(--deep-navy);">${esc(r.fileName || 'Brand Logo')}</div>
               <div class="hint">${r.sizeBytes ? Math.max(1, Math.round(r.sizeBytes / 1024)) + ' KB' : ''} &middot; ${esc(r.mimeType || 'Image')}</div>
-              <a href="${esc(r.logoUrl)}" target="_blank" class="btn sm" style="margin-top:6px;display:inline-flex;">Open Original File &nearr;</a>
+              <a href="${esc(r.logoUrl)}" target="_blank" class="btn sm" style="margin-top:6px;display:inline-flex;">Open Original Asset &nearr;</a>
             </div>
           </div>
         `
-        : `<div class="hint" style="padding:10px;background:#F8FAFD;border-radius:var(--radius-sm);">No logo file provided.</div>`;
+        : `<div class="hint" style="padding:10px;background:#F8FAFD;border-radius:var(--radius-sm);">No custom logo uploaded. Default placeholder used.</div>`;
 
       const numRows = (r.numbers || []).map(n => `
         <tr>
@@ -583,15 +592,30 @@
         </tr>
       `).join('');
 
+      const callReason = r.callReason || r.tagline || '';
+
       const previewHtml = r.numbers && r.numbers[0]
         ? callerCard({
             brandName: r.brandName,
-            tagline: r.tagline,
+            callReason: callReason,
+            tagline: callReason,
             logoUrl: r.previewable ? r.logoUrl : null,
             department: r.numbers[0].department,
             display: r.numbers[0].phoneDisplay,
             verified: r.status === 'approved'
           })
+        : '';
+
+      const remarksHtml = (r.status === 'rejected' && r.remarks)
+        ? `
+          <div style="margin-bottom:18px;padding:14px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:var(--radius-md);">
+            <div style="display:flex;align-items:center;gap:6px;color:#DC2626;font-weight:700;font-size:13px;margin-bottom:4px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+              Operator Rejection Remarks
+            </div>
+            <div style="color:#991B1B;font-size:13px;line-height:1.4;white-space:pre-wrap;background:#FFFFFF;padding:8px 12px;border-radius:4px;border:1px solid #FECACA;margin-top:6px;">${esc(r.remarks)}</div>
+          </div>
+        `
         : '';
 
       $('drawerContent').innerHTML = `
@@ -600,17 +624,21 @@
           <span class="hint">Submitted: ${r.createdAt ? new Date(r.createdAt).toLocaleString('en-PH') : '-'}</span>
         </div>
 
+        ${remarksHtml}
+
         <div style="margin-bottom:20px;">
-          <h4 style="margin-bottom:8px;">Brand Identity</h4>
-          <div style="margin-bottom:10px;">
-            <div style="font-size:15px;font-weight:700;color:var(--deep-navy);">${esc(r.brandName)}</div>
-            ${r.tagline ? `<div style="font-size:13px;color:var(--text-muted);font-style:italic;">"${esc(r.tagline)}"</div>` : ''}
+          <h4 style="margin-bottom:8px;">Brand Identity Elements</h4>
+          <div style="margin-bottom:10px;padding:12px;background:#F8FAFD;border-radius:var(--radius-md);border:1px solid var(--border);">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;">Brand Name</div>
+            <div style="font-size:16px;font-weight:700;color:var(--deep-navy);margin-bottom:8px;">${esc(r.brandName)}</div>
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;">Call Reason</div>
+            <div style="font-size:13.5px;color:var(--text-primary);font-style:italic;">"${esc(callReason || 'None specified')}"</div>
           </div>
           ${logoHtml}
         </div>
 
         <div style="margin-bottom:20px;">
-          <h4 style="margin-bottom:8px;">Departments & Numbers (${(r.numbers || []).length})</h4>
+          <h4 style="margin-bottom:8px;">Assigned Departments & Numbers (${(r.numbers || []).length})</h4>
           <div class="table-wrap" style="max-height:220px;">
             <table class="data-table" style="font-size:12.5px;">
               <thead>
@@ -633,41 +661,47 @@
               <span class="peso font-weight:600;">${peso(r.vatPHP)}</span>
             </div>
             <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;justify-content:space-between;font-weight:700;font-size:15px;color:var(--deep-navy);">
-              <span>Customer Total:</span>
+              <span>Enterprise Total:</span>
               <span class="peso" style="color:var(--primary-blue);">${peso(r.totalPHP)} / mo</span>
             </div>
           </div>
         </div>
 
         <div>
-          <h4 style="margin-bottom:8px;">Live Caller-ID Preview (Customer Screen)</h4>
+          <h4 style="margin-bottom:8px;">Android Caller-ID Display Preview</h4>
           ${previewHtml}
         </div>
       `;
 
-      // Footer Actions with Remove Option
+      // Footer Actions strictly Approve and Reject only
       const footer = $('drawerFooter');
-      if (isDeleted) {
+      if (r.status === 'pending') {
         footer.innerHTML = `
-          <button class="btn sm ok" onclick="restoreRequest('${r.requestId}')">Restore from Trash</button>
-          <button class="btn sm" onclick="closeDrawer()">Close</button>
+          <button class="no" onclick="promptReject('${r.requestId}')" style="padding:10px 20px;font-weight:600;">
+            ✕ Reject
+          </button>
+          <button class="ok" onclick="decide('${r.requestId}', 'approved')" style="padding:10px 24px;font-weight:600;">
+            ✓ Approve
+          </button>
         `;
-      } else if (r.status === 'pending') {
+      } else if (r.status === 'rejected') {
         footer.innerHTML = `
-          <button class="btn sm no" onclick="removeRequest('${r.requestId}')">Remove</button>
-          <button class="no" onclick="decide('${r.requestId}', 'rejected')">
-            Reject
-          </button>
+          <div style="flex:1;">
+            <span class="badge rejected" style="font-size:12.5px;padding:4px 10px;">Status: Rejected</span>
+          </div>
           <button class="ok" onclick="decide('${r.requestId}', 'approved')">
-            Approve & Register
+            Approve Brand
           </button>
+          <button class="btn sm" onclick="closeDrawer()">Close</button>
         `;
       } else {
         footer.innerHTML = `
-          <div style="flex:1;display:flex;align-items:center;gap:6px;">
-            <span class="badge ${r.status}">Decision: ${r.status}</span>
+          <div style="flex:1;">
+            <span class="badge approved" style="font-size:12.5px;padding:4px 10px;">✓ Active in Network</span>
           </div>
-          <button class="btn sm no" onclick="removeRequest('${r.requestId}')">Remove Request</button>
+          <button class="no btn sm" onclick="promptReject('${r.requestId}')">
+            Reject Brand
+          </button>
           <button class="btn sm" onclick="closeDrawer()">Close</button>
         `;
       }
@@ -682,7 +716,7 @@
       selectedReq = null;
     }
 
-    // Render Packages Table with Remove Option (Image 2 packages management)
+    // Render Packages Table
     function renderPackagesTable() {
       const displayPkgs = allPackages;
 
@@ -693,7 +727,7 @@
           <div class="empty-state">
             <div class="empty-state-icon">📦</div>
             <div class="empty-state-title">No published packages</div>
-            <div class="empty-state-desc">Create your first package above to allow enterprises to register numbers.</div>
+            <div class="empty-state-desc">Create your first package above to allow enterprises to select a subscription.</div>
           </div>
         `;
         return;
@@ -704,7 +738,9 @@
           <thead>
             <tr>
               <th>Package Name</th>
-              <th>Capacity</th>
+              <th>Duration</th>
+              <th>Calling Numbers</th>
+              <th>Branded Calls</th>
               <th>Monthly Price</th>
               <th>Included Options</th>
               <th>Status</th>
@@ -713,17 +749,21 @@
           </thead>
           <tbody>
             ${displayPkgs.map(p => {
+              const duration = p.duration || '30 Days';
+              const calls = p.brandedCalls ? Number(p.brandedCalls).toLocaleString() : '50,000';
               return `
                 <tr>
                   <td><strong>${esc(p.name)}</strong></td>
+                  <td><span class="chip" style="font-size:11px;">${esc(duration)}</span></td>
                   <td><strong>${p.capacity}</strong> numbers</td>
+                  <td><span class="peso font-weight:600;">${calls}</span> calls</td>
                   <td>
                     <span class="peso font-weight:600;">${peso(p.pricePHP)}</span>
-                    <div class="hint">Total with VAT: ${peso(p.pricePHP * 1.12)}</div>
+                    <div class="hint">With 12% VAT: ${peso(p.pricePHP * 1.12)}</div>
                   </td>
                   <td>
                     ${p.brand ? '<span class="chip" style="font-size:10.5px;">Brand</span>' : ''}
-                    ${p.tagline ? '<span class="chip" style="font-size:10.5px;">Tagline</span>' : ''}
+                    ${p.callReason || p.tagline ? '<span class="chip" style="font-size:10.5px;">Call Reason</span>' : ''}
                     ${p.logoIncluded ? '<span class="chip" style="font-size:10.5px;">Logo</span>' : ''}
                   </td>
                   <td><span class="badge approved">${esc(p.status)}</span></td>
@@ -856,10 +896,7 @@
                 <td class="peso"><strong>${peso(r.totalPHP)}</strong></td>
                 <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span></td>
                 <td>
-                  <div style="display:flex;gap:6px;align-items:center;">
-                    <button class="btn sm" onclick="event.stopPropagation();openRequestDrawer('${esc(r.requestId)}')">Review</button>
-                    <button class="btn sm no" onclick="event.stopPropagation();removeRequest('${esc(r.requestId)}')">Remove</button>
-                  </div>
+                  <button class="btn sm" onclick="event.stopPropagation();openRequestDrawer('${esc(r.requestId)}')">Review</button>
                 </td>
               </tr>
             `).join('')}
@@ -869,17 +906,15 @@
     }
 
     function updateStatCounts() {
-      const deletedReqs = getSharedList('deleted_requests');
       const deletedNums = getSharedList('deleted_numbers');
 
-      const activeReqs = allRequests.filter(r => !deletedReqs.includes(r.requestId));
+      const activeReqs = allRequests;
       const activePkgs = allPackages;
       const activeNums = allNumbers.filter(n => !deletedNums.includes(n.phoneE164));
 
       const pendingCount = activeReqs.filter(r => r.status === 'pending').length;
       const approvedCount = activeReqs.filter(r => r.status === 'approved').length;
       const rejectedCount = activeReqs.filter(r => r.status === 'rejected').length;
-      const trashCount = allRequests.filter(r => deletedReqs.includes(r.requestId)).length;
 
       $('stat_pkgs').textContent = activePkgs.length;
       $('stat_pending').textContent = pendingCount;
@@ -906,7 +941,6 @@
       if ($('cnt_pending')) $('cnt_pending').textContent = pendingCount;
       if ($('cnt_approved')) $('cnt_approved').textContent = approvedCount;
       if ($('cnt_rejected')) $('cnt_rejected').textContent = rejectedCount;
-      if ($('cnt_trash')) $('cnt_trash').textContent = trashCount;
     }
 
     // Main Polling & Load Loop
@@ -931,9 +965,8 @@
 
         // Check for newly arrived requests to trigger toast
         if (!isFirstLoad) {
-          const deletedReqs = getSharedList('deleted_requests');
           allRequests.forEach(r => {
-            if (!knownRequestIds.has(r.requestId) && !deletedReqs.includes(r.requestId)) {
+            if (!knownRequestIds.has(r.requestId)) {
               showToast('New Registration Request', `New request from ${r.brandName} (${r.numbersCount || 1} numbers)`, 'info', 6000);
             }
           });
@@ -970,5 +1003,32 @@
     load();
     setInterval(load, 3000);
   </script>
+
+  <!-- Modal: Reject Brand Request with Required Remarks -->
+  <div id="rejectModal" class="confirm-modal-backdrop">
+    <div class="confirm-modal-box" style="max-width:480px;">
+      <div class="confirm-modal-header">
+        <h3 class="confirm-modal-title" style="color:var(--status-rejected);">Reject Brand Request</h3>
+        <button type="button" class="confirm-modal-close" onclick="closeRejectModal()">&times;</button>
+      </div>
+      <div class="confirm-modal-body">
+        <div style="margin-bottom:12px;font-size:13px;color:var(--deep-navy);">
+          Enterprise: <strong id="rejectModalBrand">-</strong>
+        </div>
+        <p class="hint" style="margin-bottom:14px;line-height:1.4;">
+          Please enter remarks explaining why this brand request is being rejected. Rejection cannot be submitted without remarks. The enterprise will see these remarks in their portal.
+        </p>
+        <div class="form-group" style="margin-bottom:0;">
+          <label for="rejectRemarksInput">Rejection Remarks <span class="req-star">*</span></label>
+          <textarea id="rejectRemarksInput" rows="4" placeholder="e.g. Logo image resolution is too low, or call reason does not match business guidelines. Please update and resubmit." oninput="validateRejectRemarks()"></textarea>
+          <div id="rejectRemarksErr" class="field-error" style="display:none;margin-top:6px;">Rejection remarks are mandatory before rejection can be submitted.</div>
+        </div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn sm" onclick="closeRejectModal()">Cancel</button>
+        <button type="button" class="btn sm no" id="btnConfirmReject" onclick="submitRejectModal()" disabled style="font-weight:600;">Submit Rejection</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

@@ -29,12 +29,29 @@ const memoryFiles = new Map();
 
 function saveInMemoryFile(fileId, buffer, mimeType, originalName) {
   if (!fileId || !buffer) return;
+  const mime = mimeType || 'image/png';
+  const name = originalName || 'logo.png';
   memoryFiles.set(fileId, {
     buffer,
-    mimeType: mimeType || 'image/png',
-    originalName: originalName || 'logo.png',
-    dataUrl: `data:${mimeType || 'image/png'};base64,${buffer.toString('base64')}`
+    mimeType: mime,
+    originalName: name,
+    dataUrl: `data:${mime};base64,${buffer.toString('base64')}`
   });
+  // Also write to STORAGE_DIR immediately so all processes (ports 4001, 4002, 4003) can access the file
+  try {
+    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    let ext = 'png';
+    if (mime === 'image/jpeg') ext = 'jpg';
+    else if (mime === 'image/svg+xml') ext = 'svg';
+    else if (mime === 'image/webp') ext = 'webp';
+    else if (name.includes('.')) ext = name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'png';
+    const filePath = path.join(STORAGE_DIR, `${fileId}.${ext}`);
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, buffer);
+    }
+  } catch (e) {
+    console.warn('Could not persist in-memory file to disk:', e.message);
+  }
 }
 
 function getInMemoryFile(fileId) {
@@ -42,10 +59,11 @@ function getInMemoryFile(fileId) {
 }
 
 const COLS = {
-  Packages: ['packageId', 'name', 'capacity', 'pricePHP', 'brand', 'tagline', 'logoIncluded', 'status', 'createdAt'],
-  Requests: ['requestId', 'packageId', 'brandName', 'tagline', 'status', 'logoFileId', 'createdAt', 'departments', 'numbersCount', 'monthlyFeePHP', 'vatPHP', 'totalPHP', 'logoLink', 'preview'],
+  Packages: ['packageId', 'name', 'capacity', 'duration', 'pricePHP', 'brandedCalls', 'brand', 'callReason', 'tagline', 'logoIncluded', 'status', 'createdAt'],
+  Requests: ['requestId', 'packageId', 'brandName', 'callReason', 'tagline', 'status', 'remarks', 'logoFileId', 'createdAt', 'departments', 'numbersCount', 'monthlyFeePHP', 'vatPHP', 'totalPHP', 'logoLink', 'preview'],
   Numbers: ['numberId', 'requestId', 'brandName', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'status', 'createdAt'],
   Files: ['fileId', 'requestId', 'originalName', 'storedName', 'storagePath', 'url', 'mimeType', 'sizeBytes', 'sha256', 'uploadedBy', 'uploadedAt', 'preview'],
+  DepartmentLines: ['lineId', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'brandName', 'updatedAt']
 };
 const MONEY = new Set(['pricePHP', 'monthlyFeePHP', 'vatPHP', 'totalPHP']);     // shown as ₱1,234.00 in Excel
 const PESO_FMT = '"₱"#,##0.00';
@@ -66,7 +84,7 @@ const plain = v => {
 };
 
 // In-memory state and cache control
-const EMPTY = () => ({ packages: [], requests: [], numbers: [], files: [] });
+const EMPTY = () => ({ packages: [], requests: [], numbers: [], files: [], departmentLines: [] });
 let memoryState = null;
 let lastJsonMtime = 0;
 let readError = null;
@@ -123,7 +141,8 @@ async function loadWorkbookRaw() {
     packages: rowsOf(wb.getWorksheet(PREFIX + 'Packages'), 'Packages'),
     requests: rowsOf(wb.getWorksheet(PREFIX + 'Requests'), 'Requests'),
     numbers: rowsOf(wb.getWorksheet(PREFIX + 'Numbers'), 'Numbers'),
-    files: rowsOf(wb.getWorksheet(PREFIX + 'Files'), 'Files')
+    files: rowsOf(wb.getWorksheet(PREFIX + 'Files'), 'Files'),
+    departmentLines: rowsOf(wb.getWorksheet(PREFIX + 'DepartmentLines'), 'DepartmentLines')
   };
 }
 
@@ -255,13 +274,19 @@ function applyToState(s, e) {
   if (!s.requests) s.requests = [];
   if (!s.numbers) s.numbers = [];
   if (!s.files) s.files = [];
+  if (!s.departmentLines) s.departmentLines = [];
 
   if (e.t === 'pkg') {
-    const existingIdx = s.packages.findIndex(p => p.packageId === e.row.packageId);
+    const row = {
+      ...e.row,
+      duration: e.row.duration || '30 Days',
+      brandedCalls: Number(e.row.brandedCalls) || (Number(e.row.capacity || 5) * 10000) || 50000
+    };
+    const existingIdx = s.packages.findIndex(p => p.packageId === row.packageId);
     if (existingIdx >= 0) {
-      s.packages[existingIdx] = { ...s.packages[existingIdx], ...e.row };
+      s.packages[existingIdx] = { ...s.packages[existingIdx], ...row };
     } else {
-      s.packages.push({ ...e.row });
+      s.packages.push({ ...row });
     }
   }
   if (e.t === 'pkg-update') {
@@ -278,11 +303,18 @@ function applyToState(s, e) {
     }
   }
   if (e.t === 'req') {
-    const existingReq = s.requests.find(r => r.requestId === e.row.requestId);
+    const callReason = e.row.callReason || e.row.tagline || '';
+    const row = {
+      ...e.row,
+      callReason,
+      tagline: callReason,
+      remarks: e.row.remarks || ''
+    };
+    const existingReq = s.requests.find(r => r.requestId === row.requestId);
     if (!existingReq) {
-      s.requests.push({ ...e.row });
+      s.requests.push({ ...row });
     } else {
-      Object.assign(existingReq, e.row);
+      Object.assign(existingReq, row);
     }
     if (e.file && !s.files.some(f => f.fileId === e.file.fileId)) s.files.push({ ...e.file });
     for (const n of e.numbers || []) {
@@ -296,10 +328,21 @@ function applyToState(s, e) {
   }
   if (e.t === 'status') {
     const r = s.requests.find(x => x.requestId === e.requestId);
-    if (r) r.status = e.status;
+    if (r) {
+      r.status = e.status;
+      if (e.remarks !== undefined) r.remarks = e.remarks;
+    }
     s.numbers.forEach(n => {
       if (n.requestId === e.requestId) n.status = e.status;
     });
+  }
+  if (e.t === 'dept-line') {
+    const idx = s.departmentLines.findIndex(l => l.lineId === e.row.lineId);
+    if (idx >= 0) s.departmentLines[idx] = { ...s.departmentLines[idx], ...e.row };
+    else s.departmentLines.push({ ...e.row });
+  }
+  if (e.t === 'dept-line-remove') {
+    s.departmentLines = s.departmentLines.filter(l => l.lineId !== e.lineId);
   }
 }
 
@@ -560,7 +603,12 @@ function applyToWorkbook(wb, e) {
   }
   if (e.t === 'status') {
     const n = findRow(R, colIdx(R, 'requestId'), e.requestId);
-    if (n) R.getCell(n, colIdx(R, 'status')).value = e.status;
+    if (n) {
+      R.getCell(n, colIdx(R, 'status')).value = e.status;
+      if (e.remarks !== undefined) {
+        R.getCell(n, colIdx(R, 'remarks')).value = e.remarks;
+      }
+    }
     const rc = colIdx(N, 'requestId'), sc = colIdx(N, 'status');
     for (let r = 2; r <= N.rowCount; r++) {
       if (String(plain(N.getRow(r).getCell(rc).value)) === String(e.requestId)) {
