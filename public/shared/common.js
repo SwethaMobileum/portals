@@ -565,3 +565,76 @@ function syncWithServer() {
     }
   }, 350);
 }
+
+// -------------------------------------------------------------------------
+// Persistent Generated Numbers & Enterprise Departments
+// -------------------------------------------------------------------------
+const DEFAULT_ENTERPRISE_DEPTS = [
+  'Customer Service',
+  'Marketing',
+  'Collections',
+  'Credit Cards',
+  'Fraud & Security',
+  'Sales',
+  'CEO Office'
+];
+
+function getEnterpriseDepartments() {
+  try {
+    const raw = localStorage.getItem('mobileum_enterprise_departments');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    }
+  } catch (e) {}
+  return [...DEFAULT_ENTERPRISE_DEPTS];
+}
+
+function saveEnterpriseDepartments(departments) {
+  try {
+    const clean = Array.from(new Set((departments || []).map(d => String(d || '').trim()).filter(Boolean)));
+    localStorage.setItem('mobileum_enterprise_departments', JSON.stringify(clean));
+    if (syncChannel) {
+      syncChannel.postMessage({ type: 'departments_update', departments: clean });
+    }
+    return clean;
+  } catch (e) {
+    return DEFAULT_ENTERPRISE_DEPTS;
+  }
+}
+
+function getPersistentGeneratedNumbers() {
+  try {
+    const raw = localStorage.getItem('mobileum_persistent_generated_numbers');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+}
+
+function savePersistentGeneratedNumbers(numbers) {
+  try {
+    const existing = new Set(getPersistentGeneratedNumbers());
+    (numbers || []).forEach(n => {
+      if (n) {
+        const norm = typeof PH !== 'undefined' ? PH.normalize(n) : null;
+        const e164 = norm && norm.ok ? norm.e164 : String(n).trim();
+        if (e164) existing.add(e164);
+      }
+    });
+    const arr = Array.from(existing);
+    localStorage.setItem('mobileum_persistent_generated_numbers', JSON.stringify(arr));
+    if (syncChannel) {
+      syncChannel.postMessage({ type: 'generated_numbers_update', numbers: arr });
+    }
+    return arr;
+  } catch (e) {
+    return [];
+  }
+}
+
+function addPersistentGeneratedNumber(e164) {
+  return savePersistentGeneratedNumbers([e164]);
+}

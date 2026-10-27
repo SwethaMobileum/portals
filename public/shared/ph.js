@@ -29,8 +29,56 @@
     else return { ok: false, error: 'Not a valid Philippine number. ' + EXAMPLE };
     return { ok: true, e164: '+63' + n, display, type };
   }
+  // Random Number Generator matching the realistic demo format (+63 Philippine Mobile & Landline)
+  const MOBILE_PREFIXES = ['917', '918', '919', '920', '921', '922', '927', '928', '939', '977', '998'];
+  function generateRandom(usedSet) {
+    const set = usedSet instanceof Set ? usedSet : new Set(usedSet || []);
+    for (let attempts = 0; attempts < 10000; attempts++) {
+      const isLandline = Math.random() < 0.15;
+      let raw;
+      if (isLandline) {
+        const mid = Math.floor(Math.random() * 900 + 100);
+        const end = Math.floor(Math.random() * 9000 + 1000);
+        raw = `+63 2 8${mid} ${end}`;
+      } else {
+        const prefix = MOBILE_PREFIXES[Math.floor(Math.random() * MOBILE_PREFIXES.length)];
+        const mid = Math.floor(Math.random() * 900 + 100);
+        const end = Math.floor(Math.random() * 9000 + 1000);
+        raw = `+63 ${prefix} ${mid} ${end}`;
+      }
+      const norm = normalize(raw);
+      if (norm.ok && !set.has(norm.e164)) {
+        set.add(norm.e164);
+        return {
+          ok: true,
+          e164: norm.e164,
+          display: norm.display,
+          type: norm.type
+        };
+      }
+    }
+    throw new Error('Could not generate a unique phone number after 10000 attempts');
+  }
+
+  function generateBulk(count, usedSet, defaultDepartment) {
+    const set = usedSet instanceof Set ? usedSet : new Set(usedSet || []);
+    const n = Math.max(1, Math.min(Number(count) || 1, 1000));
+    const results = [];
+    for (let i = 0; i < n; i++) {
+      const generated = generateRandom(set);
+      results.push({
+        phone: generated.display,
+        phoneE164: generated.e164,
+        phoneDisplay: generated.display,
+        department: defaultDepartment || '',
+        numberType: generated.type
+      });
+    }
+    return results;
+  }
+
   const round2 = x => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
   function php(n) { return '₱' + round2(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fee(price) { const f = round2(price || 0), vat = round2(f * VAT_RATE); return { fee: f, vat, total: round2(f + vat) }; }
-  return { normalize, php, fee, round2, VAT_RATE, DEPARTMENTS, EXAMPLE };
+  return { normalize, php, fee, round2, VAT_RATE, DEPARTMENTS, EXAMPLE, generateRandom, generateBulk };
 });

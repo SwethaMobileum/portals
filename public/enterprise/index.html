@@ -307,32 +307,91 @@
 
         <!-- Right: Departments & Numbers Selection (~500 numbers support) -->
         <div>
-          <div class="form-group">
-            <label>Select Department(s) <span class="req-star">*</span></label>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;" id="deptPillContainer">
-              <span class="preset-pill active" onclick="toggleDeptPill('Customer Service', this)">Customer Service</span>
-              <span class="preset-pill active" onclick="toggleDeptPill('Marketing', this)">Marketing</span>
-              <span class="preset-pill" onclick="toggleDeptPill('Collections', this)">Collections</span>
-              <span class="preset-pill" onclick="toggleDeptPill('Credit Cards', this)">Credit Cards</span>
-              <span class="preset-pill" onclick="toggleDeptPill('Fraud & Security', this)">Fraud & Security</span>
-              <span class="preset-pill" onclick="toggleDeptPill('Sales', this)">Sales</span>
-            </div>
-            <input id="customDeptInput" placeholder="Or enter specific department name..." oninput="updateLivePreview()" style="font-size:13px;">
-          </div>
-
-          <div class="form-group">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-              <label for="bulkNumbers">Assign Calling Numbers (+63) <span class="req-star">*</span></label>
+          <!-- Department Selection & Management Bar -->
+          <div class="form-group" style="margin-bottom:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:6px;">
+              <label for="targetDeptSelect" style="margin:0;">Target Department <span class="req-star">*</span></label>
               <div style="display:flex;gap:6px;">
-                <button type="button" class="btn sm" onclick="fillBulkSampleNumbers()" style="padding:2px 8px;font-size:11.5px;">Fill Sample (25 Nums)</button>
-                <button type="button" class="btn sm" onclick="insertSavedDepartmentLineNumbers()" style="padding:2px 8px;font-size:11.5px;">+ Insert Saved Lines</button>
+                <button type="button" class="btn sm" onclick="openDeptManagerModal()" style="padding:2px 8px;font-size:11.5px;">✎ Add / Rename Departments</button>
               </div>
             </div>
-            <textarea id="bulkNumbers" rows="6" placeholder="+63 917 123 4567&#10;0918-555-0101&#10;(02) 8123 4567&#10;Paste up to 500 phone numbers separated by newlines or commas..." oninput="handleBulkNumbersInput()" style="font-family:monospace;font-size:12.5px;line-height:1.4;"></textarea>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <select id="targetDeptSelect" style="flex:1;font-size:13px;font-weight:600;padding:7px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);" onchange="handleTargetDeptChange(this.value)">
+                <!-- Populated dynamically -->
+              </select>
+            </div>
+            <div class="hint" style="margin-top:3px;">Select a department first, then auto-generate or assign numbers for it below.</div>
+          </div>
+
+          <!-- Numbers Generator & Actions Toolbar -->
+          <div class="form-group" style="margin-bottom:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+              <label style="margin:0;">Calling Numbers (+63) <span class="req-star">*</span></label>
+              <span id="capacityPlanHint" class="hint" style="margin:0;font-size:11px;font-weight:600;color:var(--deep-navy);">Max 500 Numbers</span>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+              <button type="button" class="btn sm p" onclick="addSingleRandomNumber()" style="font-weight:600;">
+                ⚡ Auto-generate / Add number
+              </button>
+              <button type="button" class="btn sm" onclick="openBulkGenModal()" style="font-weight:600;">
+                🔢 Generate N numbers
+              </button>
+              <button type="button" class="btn sm" onclick="togglePasteArea()">
+                📋 Paste / Bulk Import
+              </button>
+              <button type="button" class="btn sm" onclick="insertSavedDepartmentLineNumbers()" style="font-size:11.5px;">
+                + Saved Lines
+              </button>
+              <button type="button" class="btn sm no" onclick="clearAllNumbers()" style="margin-left:auto;font-size:11.5px;">
+                ✕ Clear All
+              </button>
+            </div>
+
+            <!-- Optional Collapsible Paste Area -->
+            <div id="pasteNumbersBox" style="display:none;margin-bottom:10px;padding:10px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-sm);">
+              <div style="font-size:12px;font-weight:600;color:var(--deep-navy);margin-bottom:4px;">Paste Numbers (up to 500)</div>
+              <textarea id="bulkPasteTextarea" rows="3" placeholder="+63 917 123 4567&#10;0918-555-0101&#10;(02) 8123 4567" style="font-family:monospace;font-size:12px;line-height:1.4;margin-bottom:6px;"></textarea>
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span class="hint">Numbers will be assigned to currently selected department</span>
+                <button type="button" class="btn sm p" onclick="importPastedNumbers()">Import Pasted Numbers</button>
+              </div>
+            </div>
+
+            <!-- Department Count Filter Pills -->
+            <div style="margin-bottom:8px;">
+              <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;letter-spacing:0.3px;">
+                Filter &amp; Count per Department:
+              </div>
+              <div id="formDeptFilterPills" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
+
+            <!-- Assigned Numbers Table / List Container -->
+            <div class="table-wrap" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:#FFFFFF;">
+              <table class="data-table" style="font-size:12px;margin:0;">
+                <thead style="position:sticky;top:0;background:#F8FAFD;z-index:2;">
+                  <tr>
+                    <th style="width:36px;">#</th>
+                    <th>Calling Number (+63) <span class="hint" style="display:inline;font-weight:normal;">(Editable)</span></th>
+                    <th>Department <span class="req-star">*</span></th>
+                    <th style="width:70px;">Type</th>
+                    <th style="width:85px;text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="assignedNumbersTableBody">
+                  <tr>
+                    <td colspan="5" class="empty-state" style="padding:18px;">
+                      No calling numbers added yet.<br>Click <strong>"Auto-generate / Add number"</strong> or <strong>"Generate N numbers"</strong> above.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
             <!-- Numbers Counter & Validation Bar -->
-            <div class="num-counter-bar" id="numCounterBar">
-              <div>Total Numbers: <strong id="cntTotalNums" style="color:var(--deep-navy);">0</strong></div>
+            <div class="num-counter-bar" id="numCounterBar" style="margin-top:8px;">
+              <div>Total: <strong id="cntTotalNums" style="color:var(--deep-navy);">0</strong></div>
               <div style="color:var(--border);">|</div>
               <div>Valid (+63): <strong id="cntValidNums" style="color:var(--status-approved);">0</strong></div>
               <div style="color:var(--border);">|</div>
@@ -519,10 +578,85 @@
       </div>
       <div class="confirm-modal-footer">
         <button type="button" class="btn sm" onclick="closeAddDeptLineModal()">Cancel</button>
-        <button type="button" class="btn sm p" onclick="submitAddDeptLine()">Save Line</button>
+        <button type="button" class="btn sm p" onclick="submitAddDeptLine()">Add Department Line</button>
       </div>
     </div>
   </div>
+
+  <!-- 3. Generate N Numbers Modal -->
+  <div id="bulkGenModal" class="confirm-modal-backdrop">
+    <div class="confirm-modal-box" style="max-width:440px;">
+      <div class="confirm-modal-header">
+        <h3 class="confirm-modal-title">🔢 Bulk Generate Calling Numbers</h3>
+        <button type="button" class="confirm-modal-close" onclick="closeBulkGenModal()">&times;</button>
+      </div>
+      <div class="confirm-modal-body" style="display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px;">Quick Presets:</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="btn sm" onclick="setBulkGenPreset(5)">5 Numbers</button>
+            <button type="button" class="btn sm" onclick="setBulkGenPreset(25)">25 Numbers</button>
+            <button type="button" class="btn sm" onclick="setBulkGenPreset(50)">50 Numbers</button>
+            <button type="button" class="btn sm" onclick="setBulkGenPreset(100)">100 Numbers</button>
+            <button type="button" class="btn sm" onclick="setBulkGenPreset(500)">500 Numbers</button>
+          </div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label for="bulkGenCountInput" style="font-size:12px;">Quantity to Generate (1 &ndash; 500) <span class="req-star">*</span></label>
+          <input id="bulkGenCountInput" type="number" min="1" max="500" value="25" placeholder="e.g. 25">
+          <div class="hint" style="margin-top:2px;">Each number is guaranteed unique across all requests and enterprises.</div>
+        </div>
+        <div class="form-group" style="margin:0;">
+          <label for="bulkGenDeptSelect" style="font-size:12px;">Assign to Department <span class="req-star">*</span></label>
+          <select id="bulkGenDeptSelect" style="font-size:13px;padding:7px 10px;font-weight:600;">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        <div id="bulkGenErr" class="field-error" style="display:none;"></div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn sm" onclick="closeBulkGenModal()">Cancel</button>
+        <button type="button" class="btn sm p" id="btnConfirmBulkGen" onclick="confirmBulkGenerate()">Generate &amp; Add Numbers</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Enterprise Department Management Modal (Add / Rename Departments) -->
+  <div id="deptManagerModal" class="confirm-modal-backdrop">
+    <div class="confirm-modal-box" style="max-width:500px;">
+      <div class="confirm-modal-header">
+        <h3 class="confirm-modal-title">✎ Enterprise Departments Management</h3>
+        <button type="button" class="confirm-modal-close" onclick="closeDeptManagerModal()">&times;</button>
+      </div>
+      <div class="confirm-modal-body" style="display:flex;flex-direction:column;gap:14px;">
+        <div class="hint">
+          Departments are customized for your enterprise. You can add new departments or rename existing ones. All number rows and dropdowns will update in real time.
+        </div>
+
+        <!-- Add Department Bar -->
+        <div style="padding:10px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-sm);">
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px;">＋ Add New Department</label>
+          <div style="display:flex;gap:8px;">
+            <input id="newDeptNameInput" placeholder="e.g. CEO Office, VIP Support, Branch Operations" style="flex:1;font-size:13px;" onkeydown="if(event.key==='Enter')submitAddNewDept()">
+            <button type="button" class="btn sm p" onclick="submitAddNewDept()">Add Department</button>
+          </div>
+          <div id="newDeptErr" class="field-error" style="display:none;margin-top:4px;"></div>
+        </div>
+
+        <!-- Existing Departments List -->
+        <div>
+          <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px;">Current Departments (Click to Rename):</label>
+          <div id="deptManagerList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:#FFFFFF;display:flex;flex-direction:column;divide-y:1px solid var(--border);">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </div>
+      <div class="confirm-modal-footer">
+        <button type="button" class="btn sm p" onclick="closeDeptManagerModal()">Done</button>
+      </div>
+    </div>
+  </div>
+
 
   <script src="/shared/common.js"></script>
   <script src="/shared/ph.js"></script>
@@ -791,61 +925,302 @@
       updateLivePreview();
     }
 
-    // ---------- Department & Numbers Helpers ----------
-    function toggleDeptPill(deptName, el) {
-      el.classList.toggle('active');
-      updateLivePreview();
+    // ---------- Calling Numbers & Department State ----------
+    let assignedNumbers = []; // [{ id, phone, phoneE164, phoneDisplay, department, numberType, error }]
+    let formDeptFilter = 'all';
+    let allKnownNumbers = []; // Merged from server /api/numbers?all=1
+
+    function getTargetDepartment() {
+      const el = $('targetDeptSelect');
+      if (el && el.value && el.value !== '__manage__') return el.value;
+      const depts = getEnterpriseDepartments();
+      return depts[0] || 'Customer Service';
     }
 
-    function getSelectedDepartments() {
-      const activePills = Array.from(document.querySelectorAll('#deptPillContainer .preset-pill.active')).map(p => p.textContent.trim());
-      const custom = ($('customDeptInput')?.value || '').trim();
-      if (custom && !activePills.includes(custom)) {
-        activePills.push(custom);
+    function handleTargetDeptChange(val) {
+      if (val === '__manage__') {
+        openDeptManagerModal();
+        const depts = getEnterpriseDepartments();
+        if ($('targetDeptSelect')) $('targetDeptSelect').value = depts[0] || 'Customer Service';
       }
-      return activePills.length ? activePills : ['General'];
     }
 
-    function parseNumbersList(txt) {
-      return String(txt || '').split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
+    function populateDeptSelects() {
+      const depts = getEnterpriseDepartments();
+      const targetSel = $('targetDeptSelect');
+      if (targetSel) {
+        const curVal = targetSel.value;
+        targetSel.innerHTML = depts.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('') +
+          `<option value="__manage__" style="color:var(--primary-blue);font-weight:700;">＋ Manage / Add Departments...</option>`;
+        if (curVal && depts.includes(curVal)) targetSel.value = curVal;
+        else if (depts.length) targetSel.value = depts[0];
+      }
+
+      const bulkSel = $('bulkGenDeptSelect');
+      if (bulkSel) {
+        const curVal = bulkSel.value;
+        bulkSel.innerHTML = `<option value="all">★ Distribute across all departments</option>` +
+          depts.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
+        if (curVal && (curVal === 'all' || depts.includes(curVal))) bulkSel.value = curVal;
+      }
+
+      // Refresh department dropdowns in active numbers table
+      document.querySelectorAll('.row-dept-select').forEach(sel => {
+        const rowIdx = Number(sel.dataset.index);
+        const cur = assignedNumbers[rowIdx]?.department || '';
+        sel.innerHTML = `<option value="" disabled ${!cur ? 'selected' : ''}>-- Select Department --</option>` +
+          depts.map(d => `<option value="${esc(d)}" ${d === cur ? 'selected' : ''}>${esc(d)}</option>`).join('') +
+          `<option value="__manage__">+ Add New Department...</option>`;
+      });
+
+      renderDeptFilterPills();
     }
 
-    function parseAndValidateNumbers() {
-      const txt = $('bulkNumbers')?.value || '';
-      const list = parseNumbersList(txt);
-      const seen = new Set();
-      let valid = 0, invalid = 0, dup = 0;
-
-      list.forEach(n => {
-        const norm = PH.normalize(n);
-        if (!norm.ok) {
-          invalid++;
-        } else if (seen.has(norm.e164)) {
-          dup++;
-        } else {
-          seen.add(norm.e164);
-          valid++;
+    function renderDeptFilterPills() {
+      const container = $('formDeptFilterPills');
+      if (!container) return;
+      const depts = getEnterpriseDepartments();
+      const counts = {};
+      depts.forEach(d => { counts[d] = 0; });
+      assignedNumbers.forEach(n => {
+        if (n.department) {
+          counts[n.department] = (counts[n.department] || 0) + 1;
         }
       });
 
-      if ($('cntTotalNums')) $('cntTotalNums').textContent = list.length;
-      if ($('cntValidNums')) $('cntValidNums').textContent = valid;
-      if ($('cntInvalidNums')) $('cntInvalidNums').textContent = invalid;
-      if ($('cntDupNums')) $('cntDupNums').textContent = dup;
-
-      return { total: list.length, valid, invalid, dup, validNumbers: Array.from(seen) };
+      let pillsHtml = `
+        <span class="preset-pill ${formDeptFilter === 'all' ? 'active' : ''}" onclick="setFormDeptFilter('all')">
+          All (${assignedNumbers.length})
+        </span>
+      `;
+      depts.forEach(d => {
+        const count = counts[d] || 0;
+        pillsHtml += `
+          <span class="preset-pill ${formDeptFilter === d ? 'active' : ''}" onclick="setFormDeptFilter('${esc(d)}')">
+            ${esc(d)} (${count})
+          </span>
+        `;
+      });
+      container.innerHTML = pillsHtml;
     }
 
-    function handleBulkNumbersInput() {
-      parseAndValidateNumbers();
-      updateLivePreview();
+    function setFormDeptFilter(filter) {
+      formDeptFilter = filter;
+      renderAssignedNumbersTable();
+      renderDeptFilterPills();
     }
 
-    function fillBulkSampleNumbers() {
-      $('bulkNumbers').value = SAMPLE_50_NUMBERS.join('\n');
-      parseAndValidateNumbers();
+    // Global uniqueness across whole app: pending, approved, rejected, and client-generated
+    function getAllUsedNumbersSet(excludeE164) {
+      const set = new Set();
+      // 1. Persistent generated numbers (retained across refreshes)
+      getPersistentGeneratedNumbers().forEach(n => set.add(n));
+
+      // 2. All numbers from all existing server requests & numbers
+      (allKnownNumbers || []).forEach(n => {
+        if (n.phoneE164) set.add(n.phoneE164);
+      });
+
+      // 3. All numbers from client requests
+      getClientRequests().forEach(r => {
+        (r.numbers || []).forEach(n => {
+          if (n.phoneE164) set.add(n.phoneE164);
+        });
+      });
+
+      // 4. All numbers in current active form
+      assignedNumbers.forEach(n => {
+        if (n.phoneE164 && n.phoneE164 !== excludeE164) set.add(n.phoneE164);
+      });
+
+      return set;
+    }
+
+    // ---------- 1. Random Number Auto-fill ----------
+    function addSingleRandomNumber() {
+      const dept = getTargetDepartment();
+      if (!dept) {
+        showToast('Department Required', 'Please create or select a department first.', 'error');
+        return;
+      }
+
+      // Check plan capacity
+      const activePkg = pkgs.find(p => p.packageId === activePlanId) || pkgs[0];
+      const maxCap = activePkg ? activePkg.capacity : 500;
+      if (assignedNumbers.length >= maxCap) {
+        showToast('Capacity Limit Reached', `Your plan allows up to ${maxCap} numbers. Upgrade plan or remove existing numbers.`, 'error');
+        return;
+      }
+
+      try {
+        const usedSet = getAllUsedNumbersSet();
+        const gen = PH.generateRandom(usedSet);
+        addPersistentGeneratedNumber(gen.e164);
+
+        assignedNumbers.push({
+          id: 'num_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          phone: gen.display,
+          phoneE164: gen.e164,
+          phoneDisplay: gen.display,
+          department: dept,
+          numberType: gen.type,
+          error: ''
+        });
+
+        $('bulkNumbersErr').style.display = 'none';
+        renderAssignedNumbersTable();
+        updateLivePreview();
+        showToast('Number Auto-Generated', `${gen.display} created for ${dept}.`, 'success', 2200);
+      } catch (e) {
+        showToast('Error', e.message, 'error');
+      }
+    }
+
+    // ---------- Bulk Generation Modal ----------
+    function openBulkGenModal() {
+      populateDeptSelects();
+      const modal = $('bulkGenModal');
+      if (modal) modal.style.display = 'flex';
+      $('bulkGenErr').style.display = 'none';
+      if ($('bulkGenCountInput')) $('bulkGenCountInput').focus();
+    }
+
+    function closeBulkGenModal() {
+      const modal = $('bulkGenModal');
+      if (modal) modal.style.display = 'none';
+    }
+
+    function setBulkGenPreset(n) {
+      if ($('bulkGenCountInput')) $('bulkGenCountInput').value = n;
+    }
+
+    async function confirmBulkGenerate() {
+      const countInput = $('bulkGenCountInput');
+      const count = Math.max(1, Math.min(Number(countInput?.value) || 25, 500));
+      const targetDept = $('bulkGenDeptSelect')?.value || 'all';
+      const depts = getEnterpriseDepartments();
+
+      if (!depts.length) {
+        $('bulkGenErr').textContent = 'Please configure at least one department first.';
+        $('bulkGenErr').style.display = 'block';
+        return;
+      }
+
+      const activePkg = pkgs.find(p => p.packageId === activePlanId) || pkgs[0];
+      const maxCap = activePkg ? activePkg.capacity : 500;
+      if (assignedNumbers.length + count > maxCap) {
+        $('bulkGenErr').textContent = `Adding ${count} numbers will exceed plan capacity (${maxCap}). Current: ${assignedNumbers.length}.`;
+        $('bulkGenErr').style.display = 'block';
+        return;
+      }
+
+      const btn = $('btnConfirmBulkGen');
+      btn.disabled = true;
+      btn.innerHTML = dotsLoader() + ` Generating ${count} numbers...`;
+
+      try {
+        const usedSet = getAllUsedNumbersSet();
+        const newPersistent = [];
+        const added = [];
+
+        for (let i = 0; i < count; i++) {
+          const dept = targetDept === 'all' ? depts[i % depts.length] : targetDept;
+          const gen = PH.generateRandom(usedSet);
+          newPersistent.push(gen.e164);
+          added.push({
+            id: 'num_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 6),
+            phone: gen.display,
+            phoneE164: gen.e164,
+            phoneDisplay: gen.display,
+            department: dept,
+            numberType: gen.type,
+            error: ''
+          });
+        }
+
+        savePersistentGeneratedNumbers(newPersistent);
+        assignedNumbers.push(...added);
+
+        closeBulkGenModal();
+        $('bulkNumbersErr').style.display = 'none';
+        renderAssignedNumbersTable();
+        updateLivePreview();
+        showToast('Bulk Numbers Generated', `Successfully generated ${count} unique numbers across departments.`, 'success', 3500);
+      } catch (e) {
+        $('bulkGenErr').textContent = 'Generation failed: ' + e.message;
+        $('bulkGenErr').style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate & Add Numbers';
+      }
+    }
+
+    // ---------- Paste / Bulk Import Option ----------
+    function togglePasteArea() {
+      const box = $('pasteNumbersBox');
+      if (box) {
+        const isOpen = box.style.display === 'block';
+        box.style.display = isOpen ? 'none' : 'block';
+        if (!isOpen && $('bulkPasteTextarea')) $('bulkPasteTextarea').focus();
+      }
+    }
+
+    function importPastedNumbers() {
+      const txt = $('bulkPasteTextarea')?.value || '';
+      const list = String(txt).split(/[\n,;]+/).map(x => x.trim()).filter(Boolean);
+      if (!list.length) {
+        showToast('Empty Input', 'Please paste at least one phone number.', 'error');
+        return;
+      }
+      const dept = getTargetDepartment();
+      const usedSet = getAllUsedNumbersSet();
+      let imported = 0, duplicates = 0, invalid = 0;
+
+      list.forEach(raw => {
+        const norm = PH.normalize(raw);
+        if (!norm.ok) {
+          invalid++;
+          assignedNumbers.push({
+            id: 'num_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            phone: raw,
+            phoneE164: '',
+            phoneDisplay: raw,
+            department: dept,
+            numberType: 'Unknown',
+            error: norm.error || 'Invalid Philippine format'
+          });
+        } else if (usedSet.has(norm.e164)) {
+          duplicates++;
+          assignedNumbers.push({
+            id: 'num_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            phone: norm.display,
+            phoneE164: norm.e164,
+            phoneDisplay: norm.display,
+            department: dept,
+            numberType: norm.type,
+            error: 'Number already registered or repeated'
+          });
+        } else {
+          usedSet.add(norm.e164);
+          addPersistentGeneratedNumber(norm.e164);
+          imported++;
+          assignedNumbers.push({
+            id: 'num_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            phone: norm.display,
+            phoneE164: norm.e164,
+            phoneDisplay: norm.display,
+            department: dept,
+            numberType: norm.type,
+            error: ''
+          });
+        }
+      });
+
+      $('bulkPasteTextarea').value = '';
+      $('pasteNumbersBox').style.display = 'none';
+      renderAssignedNumbersTable();
       updateLivePreview();
-      showToast('Sample Numbers Loaded', 'Loaded 25 sample Philippine numbers for demonstration.', 'info', 2500);
+      showToast('Import Complete', `Imported ${imported} numbers for ${dept}.${duplicates ? ` (${duplicates} duplicates)` : ''}${invalid ? ` (${invalid} invalid)` : ''}`, 'info', 4000);
     }
 
     function insertSavedDepartmentLineNumbers() {
@@ -853,23 +1228,362 @@
         showToast('No Saved Lines', 'No department lines configured yet. Add them in the Department Lines tab.', 'info');
         return;
       }
-      const existing = parseNumbersList($('bulkNumbers').value);
-      const toAdd = departmentLines.map(d => d.phoneDisplay || d.phoneE164);
-      const combined = Array.from(new Set([...existing, ...toAdd]));
-      $('bulkNumbers').value = combined.join('\n');
-      parseAndValidateNumbers();
+      const usedSet = getAllUsedNumbersSet();
+      let added = 0;
+      departmentLines.forEach(line => {
+        const norm = PH.normalize(line.phoneE164 || line.phoneDisplay);
+        if (norm.ok && !usedSet.has(norm.e164)) {
+          usedSet.add(norm.e164);
+          addPersistentGeneratedNumber(norm.e164);
+          assignedNumbers.push({
+            id: 'num_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            phone: norm.display,
+            phoneE164: norm.e164,
+            phoneDisplay: norm.display,
+            department: line.department || getTargetDepartment(),
+            numberType: norm.type,
+            error: ''
+          });
+          added++;
+        }
+      });
+      renderAssignedNumbersTable();
       updateLivePreview();
-      showToast('Department Lines Inserted', `Added numbers from ${departmentLines.length} saved department line(s).`, 'success');
+      showToast('Department Lines Inserted', `Added ${added} line(s) mapped to their configured departments.`, 'success');
+    }
+
+    function clearAllNumbers() {
+      if (!assignedNumbers.length) return;
+      assignedNumbers = [];
+      $('bulkNumbersErr').style.display = 'none';
+      renderAssignedNumbersTable();
+      updateLivePreview();
+      showToast('Cleared', 'All numbers cleared from current form.', 'info');
+    }
+
+    // ---------- Inline Editing & Department Assignment ----------
+    function handleNumberChange(index, newRawVal) {
+      const item = assignedNumbers[index];
+      if (!item) return;
+      const raw = String(newRawVal || '').trim();
+      const norm = PH.normalize(raw);
+
+      if (!norm.ok) {
+        item.phone = raw;
+        item.phoneE164 = '';
+        item.phoneDisplay = raw;
+        item.error = norm.error || 'Invalid phone number format';
+      } else {
+        const usedSet = getAllUsedNumbersSet(item.phoneE164);
+        if (usedSet.has(norm.e164)) {
+          item.phone = norm.display;
+          item.phoneE164 = norm.e164;
+          item.phoneDisplay = norm.display;
+          item.numberType = norm.type;
+          item.error = 'Number already exists or clashing across app';
+        } else {
+          item.phone = norm.display;
+          item.phoneE164 = norm.e164;
+          item.phoneDisplay = norm.display;
+          item.numberType = norm.type;
+          item.error = '';
+          addPersistentGeneratedNumber(norm.e164);
+        }
+      }
+      renderAssignedNumbersTable();
+      updateLivePreview();
+    }
+
+    function handleNumberDeptChange(index, newDept) {
+      if (newDept === '__manage__') {
+        openDeptManagerModal();
+        renderAssignedNumbersTable();
+        return;
+      }
+      const item = assignedNumbers[index];
+      if (item) {
+        item.department = newDept;
+        if (!newDept) {
+          item.error = 'Department is required for this number';
+        } else if (item.error === 'Department is required for this number') {
+          item.error = '';
+        }
+      }
+      renderAssignedNumbersTable();
+      updateLivePreview();
+    }
+
+    function reRollNumber(index) {
+      const item = assignedNumbers[index];
+      if (!item) return;
+      try {
+        const usedSet = getAllUsedNumbersSet(item.phoneE164);
+        const gen = PH.generateRandom(usedSet);
+        addPersistentGeneratedNumber(gen.e164);
+        item.phone = gen.display;
+        item.phoneE164 = gen.e164;
+        item.phoneDisplay = gen.display;
+        item.numberType = gen.type;
+        item.error = '';
+        renderAssignedNumbersTable();
+        updateLivePreview();
+        showToast('Number Re-rolled', `Replaced with ${gen.display}`, 'info', 1800);
+      } catch (e) {
+        showToast('Error', e.message, 'error');
+      }
+    }
+
+    function removeAssignedNumber(index) {
+      assignedNumbers.splice(index, 1);
+      renderAssignedNumbersTable();
+      updateLivePreview();
+    }
+
+    // ---------- Table Renderer & Counter Bar ----------
+    function renderAssignedNumbersTable() {
+      const tbody = $('assignedNumbersTableBody');
+      const depts = getEnterpriseDepartments();
+
+      // Filter rows
+      const visible = assignedNumbers.filter(n => formDeptFilter === 'all' || n.department === formDeptFilter);
+
+      let validCount = 0, invalidCount = 0, dupCount = 0;
+      const seenE164 = new Set();
+      assignedNumbers.forEach(n => {
+        if (!n.phoneE164 || n.error) {
+          if (n.error && n.error.includes('already exists')) dupCount++;
+          else invalidCount++;
+        } else if (seenE164.has(n.phoneE164)) {
+          dupCount++;
+        } else {
+          seenE164.add(n.phoneE164);
+          if (n.department) validCount++;
+          else invalidCount++;
+        }
+      });
+
+      if ($('cntTotalNums')) $('cntTotalNums').textContent = assignedNumbers.length;
+      if ($('cntValidNums')) $('cntValidNums').textContent = validCount;
+      if ($('cntInvalidNums')) $('cntInvalidNums').textContent = invalidCount;
+      if ($('cntDupNums')) $('cntDupNums').textContent = dupCount;
+
+      renderDeptFilterPills();
+
+      if (!assignedNumbers.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="empty-state" style="padding:24px;">
+              <div style="font-size:24px;margin-bottom:6px;">📱</div>
+              <div style="font-weight:600;color:var(--deep-navy);">No calling numbers added yet</div>
+              <div class="hint">Use <strong>"Auto-generate / Add number"</strong> for random auto-fill or <strong>"Generate N numbers"</strong> for bulk.</div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      if (!visible.length) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="empty-state" style="padding:18px;">
+              No numbers currently assigned to <strong>${esc(formDeptFilter)}</strong>.
+              <br><button type="button" class="btn sm" onclick="setFormDeptFilter('all')" style="margin-top:8px;">Show All (${assignedNumbers.length})</button>
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = visible.map((n) => {
+        const originalIndex = assignedNumbers.indexOf(n);
+        const hasErr = !!n.error || !n.department;
+        const errBorder = hasErr ? 'border-color:var(--status-rejected);background:#FEF2F2;' : '';
+        const deptBorder = !n.department ? 'border-color:var(--status-rejected);background:#FEF2F2;' : '';
+
+        const deptOptions = depts.map(d =>
+          `<option value="${esc(d)}" ${d === n.department ? 'selected' : ''}>${esc(d)}</option>`
+        ).join('') + `<option value="__manage__">+ Add New Department...</option>`;
+
+        return `
+          <tr style="${hasErr ? 'background:rgba(239,68,68,0.04);' : ''}">
+            <td style="font-weight:600;color:var(--text-muted);font-size:11px;">#${originalIndex + 1}</td>
+            <td>
+              <div style="display:flex;flex-direction:column;gap:2px;">
+                <input type="text"
+                       value="${esc(n.phoneDisplay || n.phone)}"
+                       onchange="handleNumberChange(${originalIndex}, this.value)"
+                       style="font-family:monospace;font-size:12.5px;font-weight:600;padding:4px 8px;border-radius:4px;border:1px solid var(--border);width:100%;${errBorder}"
+                       placeholder="+63 9XX XXX XXXX">
+                ${n.error ? `<div class="field-error" style="display:block;margin:0;font-size:10.5px;">${esc(n.error)}</div>` : ''}
+              </div>
+            </td>
+            <td>
+              <select class="row-dept-select"
+                      data-index="${originalIndex}"
+                      onchange="handleNumberDeptChange(${originalIndex}, this.value)"
+                      style="font-size:12px;font-weight:600;padding:4px 6px;border-radius:4px;border:1px solid var(--border);width:100%;${deptBorder}">
+                <option value="" disabled ${!n.department ? 'selected' : ''}>-- Department Required --</option>
+                ${deptOptions}
+              </select>
+            </td>
+            <td>
+              <span class="chip" style="font-size:10px;">${esc(n.numberType || 'Phone')}</span>
+            </td>
+            <td style="text-align:right;">
+              <div style="display:flex;gap:4px;justify-content:flex-end;">
+                <button type="button" class="btn sm" onclick="reRollNumber(${originalIndex})" title="Auto-generate a new random number for this row" style="padding:2px 6px;font-size:11px;">
+                  🎲
+                </button>
+                <button type="button" class="btn sm no" onclick="removeAssignedNumber(${originalIndex})" title="Remove number" style="padding:2px 6px;font-size:11px;">
+                  ✕
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // ---------- Enterprise Department Manager Modal ----------
+    function openDeptManagerModal() {
+      const modal = $('deptManagerModal');
+      if (modal) modal.style.display = 'flex';
+      $('newDeptErr').style.display = 'none';
+      if ($('newDeptNameInput')) $('newDeptNameInput').value = '';
+      renderDeptManagerList();
+    }
+
+    function closeDeptManagerModal() {
+      const modal = $('deptManagerModal');
+      if (modal) modal.style.display = 'none';
+      populateDeptSelects();
+      renderAssignedNumbersTable();
+    }
+
+    function renderDeptManagerList() {
+      const listEl = $('deptManagerList');
+      if (!listEl) return;
+      const depts = getEnterpriseDepartments();
+
+      // Count usage in assigned numbers
+      const usage = {};
+      assignedNumbers.forEach(n => {
+        if (n.department) usage[n.department] = (usage[n.department] || 0) + 1;
+      });
+
+      if (!depts.length) {
+        listEl.innerHTML = `<div class="empty-state" style="padding:14px;">No departments found. Add one above.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = depts.map((d, idx) => {
+        const inUseCount = usage[d] || 0;
+        return `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);gap:8px;">
+            <div style="flex:1;display:flex;align-items:center;gap:8px;">
+              <span style="font-weight:600;font-size:13px;color:var(--deep-navy);" id="deptText_${idx}">${esc(d)}</span>
+              <span class="chip" style="font-size:10.5px;">${inUseCount} number(s) in form</span>
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button type="button" class="btn sm" onclick="promptRenameDept('${esc(d)}')" style="padding:2px 8px;font-size:11.5px;">
+                ✎ Rename
+              </button>
+              <button type="button" class="btn sm no" onclick="deleteEnterpriseDept('${esc(d)}')" style="padding:2px 8px;font-size:11.5px;" ${inUseCount > 0 ? 'title="Department is assigned to numbers in form"' : ''}>
+                ✕
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function submitAddNewDept() {
+      const input = $('newDeptNameInput');
+      const name = (input?.value || '').trim();
+      const err = $('newDeptErr');
+      err.style.display = 'none';
+
+      if (!name) {
+        err.textContent = 'Please enter a department name.';
+        err.display = 'block';
+        return;
+      }
+
+      const depts = getEnterpriseDepartments();
+      if (depts.map(x => x.toLowerCase()).includes(name.toLowerCase())) {
+        err.textContent = 'This department already exists.';
+        err.style.display = 'block';
+        return;
+      }
+
+      depts.push(name);
+      saveEnterpriseDepartments(depts);
+      input.value = '';
+      renderDeptManagerList();
+      populateDeptSelects();
+      showToast('Department Added', `Department "${name}" is now available.`, 'success');
+    }
+
+    function promptRenameDept(oldName) {
+      const newName = prompt(`Enter new name for department "${oldName}":`, oldName);
+      if (newName === null) return;
+      const clean = newName.trim();
+      if (!clean) {
+        showToast('Invalid Name', 'Department name cannot be blank.', 'error');
+        return;
+      }
+      if (clean.toLowerCase() === oldName.toLowerCase()) return;
+
+      const depts = getEnterpriseDepartments();
+      const idx = depts.indexOf(oldName);
+      if (idx >= 0) {
+        depts[idx] = clean;
+        saveEnterpriseDepartments(depts);
+
+        // Update assignedNumbers that had oldName
+        assignedNumbers.forEach(n => {
+          if (n.department === oldName) n.department = clean;
+        });
+
+        renderDeptManagerList();
+        populateDeptSelects();
+        renderAssignedNumbersTable();
+        showToast('Department Renamed', `Renamed "${oldName}" to "${clean}".`, 'success');
+      }
+    }
+
+    function deleteEnterpriseDept(deptName) {
+      const depts = getEnterpriseDepartments();
+      if (depts.length <= 1) {
+        showToast('Cannot Delete', 'Enterprise must have at least one department.', 'error');
+        return;
+      }
+      const inUse = assignedNumbers.some(n => n.department === deptName);
+      if (inUse) {
+        if (!confirm(`Department "${deptName}" is assigned to numbers in your current form. Reassign them first, or click OK to delete and reassign to ${depts[0]}.`)) {
+          return;
+        }
+        const fallback = depts.find(d => d !== deptName) || 'General';
+        assignedNumbers.forEach(n => {
+          if (n.department === deptName) n.department = fallback;
+        });
+      }
+
+      const updated = depts.filter(d => d !== deptName);
+      saveEnterpriseDepartments(updated);
+      renderDeptManagerList();
+      populateDeptSelects();
+      renderAssignedNumbersTable();
+      showToast('Department Removed', `Removed department "${deptName}".`, 'info');
     }
 
     // ---------- Live Customer Screen Preview ----------
     function updateLivePreview() {
       const brand = ($('brand')?.value || '').trim() || 'Enterprise Brand Name';
       const callReason = ($('callReason')?.value || '').trim();
-      const depts = getSelectedDepartments();
-      const firstDept = depts[0] || 'Customer Care';
-      const numStats = parseAndValidateNumbers();
-      const firstNum = numStats.validNumbers[0] || '+63 917 123 4567';
+      const firstNum = assignedNumbers.find(n => n.phoneE164 && !n.error) || assignedNumbers[0];
+      const dept = firstNum?.department || getTargetDepartment();
+      const display = firstNum?.phoneDisplay || firstNum?.phone || '+63 917 123 4567';
 
       const logoUrl = selectedLogoPreviewUrl || '/shared/assets/mobileum-logo.png';
 
@@ -878,8 +1592,8 @@
         callReason: callReason,
         tagline: callReason,
         logoUrl: logoUrl,
-        department: firstDept,
-        display: firstNum,
+        department: dept,
+        display: display,
         verified: true
       });
     }
@@ -888,11 +1602,10 @@
       $('brand').value = '';
       $('callReason').value = '';
       clearSelectedLogo();
-      $('customDeptInput').value = '';
-      $('bulkNumbers').value = '';
+      assignedNumbers = [];
       $('brandErr').style.display = 'none';
       $('bulkNumbersErr').style.display = 'none';
-      parseAndValidateNumbers();
+      renderAssignedNumbersTable();
       updateLivePreview();
     }
 
@@ -901,8 +1614,11 @@
       const brand = ($('brand')?.value || '').trim();
       const callReason = ($('callReason')?.value || '').trim();
       const msg = $('brandReqMsg');
+      const errBox = $('bulkNumbersErr');
       msg.className = 'msg';
       msg.textContent = '';
+      errBox.style.display = 'none';
+      errBox.textContent = '';
 
       if (!brand) {
         $('brandErr').style.display = 'block';
@@ -912,28 +1628,51 @@
       }
       $('brandErr').style.display = 'none';
 
-      const depts = getSelectedDepartments();
-      const numStats = parseAndValidateNumbers();
-
-      if (numStats.total === 0) {
-        $('bulkNumbersErr').textContent = 'Please assign at least one phone number to this brand request.';
-        $('bulkNumbersErr').style.display = 'block';
-        $('bulkNumbers').focus();
-        showToast('No Numbers Assigned', 'Please enter at least one phone number.', 'error');
+      if (!assignedNumbers.length) {
+        errBox.textContent = 'Please add at least one calling number with an assigned department to this brand request.';
+        errBox.style.display = 'block';
+        showToast('No Numbers Assigned', 'Click "Auto-generate / Add number" or "Generate N numbers" to add calling numbers.', 'error');
         return;
       }
 
-      if (numStats.invalid > 0) {
-        $('bulkNumbersErr').textContent = `Please correct or remove the ${numStats.invalid} invalid phone number(s).`;
-        $('bulkNumbersErr').style.display = 'block';
-        return;
+      // Check: Every number must belong to exactly one department
+      for (let i = 0; i < assignedNumbers.length; i++) {
+        const n = assignedNumbers[i];
+        if (!n.department || !String(n.department).trim()) {
+          errBox.textContent = `Validation Error: Calling number #${i + 1} (${n.phoneDisplay || n.phone}) is missing an assigned department. Every number must have a department.`;
+          errBox.style.display = 'block';
+          showToast('Department Required', `Please assign a department to number #${i + 1}.`, 'error');
+          return;
+        }
       }
-      $('bulkNumbersErr').style.display = 'none';
+
+      // Check: Validate all numbers format and check duplicates within request
+      const seen = new Set();
+      for (let i = 0; i < assignedNumbers.length; i++) {
+        const n = assignedNumbers[i];
+        const norm = PH.normalize(n.phoneDisplay || n.phone);
+        if (!norm.ok) {
+          errBox.textContent = `Invalid phone number #${i + 1} (${n.phone}): ${norm.error}`;
+          errBox.style.display = 'block';
+          showToast('Invalid Number', `Number #${i + 1} is invalid.`, 'error');
+          return;
+        }
+        if (seen.has(norm.e164)) {
+          errBox.textContent = `Duplicate phone number #${i + 1} (${norm.display}): Number is repeated in this request.`;
+          errBox.style.display = 'block';
+          showToast('Duplicate Number', `Number #${i + 1} is listed twice.`, 'error');
+          return;
+        }
+        seen.add(norm.e164);
+        n.phoneE164 = norm.e164;
+        n.phoneDisplay = norm.display;
+        n.numberType = norm.type;
+      }
 
       // Check package capacity
       const activePkg = pkgs.find(p => p.packageId === activePlanId) || pkgs[0];
-      if (activePkg && numStats.valid > activePkg.capacity) {
-        showToast('Capacity Exceeded', `Your current plan allows up to ${activePkg.capacity} numbers; you assigned ${numStats.valid}. Please select a higher plan or reduce numbers.`, 'error');
+      if (activePkg && assignedNumbers.length > activePkg.capacity) {
+        showToast('Capacity Exceeded', `Your current plan allows up to ${activePkg.capacity} numbers; you assigned ${assignedNumbers.length}. Please select a higher plan or reduce numbers.`, 'error');
         return;
       }
 
@@ -947,12 +1686,27 @@
       fd.append('callReason', callReason);
       fd.append('tagline', callReason);
 
-      // Structure departments payload
-      const deptPayload = depts.map(dName => ({
-        name: dName,
-        numbers: numStats.validNumbers
+      // Group numbers by department
+      const byDept = {};
+      assignedNumbers.forEach(n => {
+        const dept = n.department.trim();
+        if (!byDept[dept]) byDept[dept] = [];
+        byDept[dept].push(n.phoneE164);
+      });
+      const deptPayload = Object.entries(byDept).map(([name, nums]) => ({
+        name,
+        numbers: nums
       }));
       fd.append('departments', JSON.stringify(deptPayload));
+
+      // Also send detailed number objects with department mapping
+      fd.append('numbers', JSON.stringify(assignedNumbers.map(n => ({
+        phone: n.phoneDisplay,
+        phoneE164: n.phoneE164,
+        phoneDisplay: n.phoneDisplay,
+        department: n.department,
+        numberType: n.numberType
+      }))));
 
       if (selectedLogoFile) {
         fd.append('logo', selectedLogoFile);
@@ -961,13 +1715,19 @@
       try {
         const r = await api('/api/requests', { method: 'POST', body: fd });
         saveClientRequest(r);
-        showToast('Brand Request Submitted', `Brand request "${brand}" submitted with status PENDING for Operator review.`, 'success', 6000);
+
+        // Save generated numbers to persistent store
+        savePersistentGeneratedNumbers(assignedNumbers.map(n => n.phoneE164));
+
+        showToast('Brand Request Submitted', `Brand request "${brand}" with ${assignedNumbers.length} department-linked numbers submitted for Operator review.`, 'success', 6000);
         resetBrandRequestForm();
         await load();
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
       } catch (e) {
         msg.className = 'msg err';
         msg.textContent = 'Submission failed: ' + e.message;
+        errBox.textContent = e.message;
+        errBox.style.display = 'block';
         showToast('Error', e.message, 'error');
       } finally {
         btn.disabled = false;
@@ -980,14 +1740,34 @@
       if (!r) return;
       $('brand').value = r.brandName || '';
       $('callReason').value = r.callReason || r.tagline || '';
+
+      // Populate assigned numbers with preserved departments
       if (r.numbers && r.numbers.length) {
-        $('bulkNumbers').value = r.numbers.map(n => n.phoneDisplay || n.phoneE164).join('\n');
+        assignedNumbers = r.numbers.map(n => ({
+          id: 'num_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          phone: n.phoneDisplay || n.phoneE164,
+          phoneE164: n.phoneE164,
+          phoneDisplay: n.phoneDisplay || n.phoneE164,
+          department: n.department || 'Customer Service',
+          numberType: n.numberType || 'Mobile',
+          error: ''
+        }));
+      } else {
+        assignedNumbers = [];
       }
-      parseAndValidateNumbers();
+
+      renderAssignedNumbersTable();
       updateLivePreview();
       portalShell.switchTab('brand_requests');
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      showToast('Form Populated', `Loaded details from request ${requestId}. Make your changes and submit again.`, 'info');
+      showToast('Form Populated', `Loaded ${assignedNumbers.length} numbers from request ${requestId}. Review and submit again.`, 'info');
+    }
+
+    function openSimulatedCall(num) {
+      const norm = PH.normalize(num);
+      const target = norm.ok ? norm.e164 : num;
+      const cuUrl = (info.customerUrl || '/customer') + '?number=' + encodeURIComponent(target);
+      window.open(cuUrl, '_blank');
     }
 
     // ---------- Render Brand Requests List ----------
@@ -1001,12 +1781,32 @@
       const isPending = r.status === 'pending';
       const callReason = r.callReason || r.tagline || '';
 
-      const numRows = (r.numbers || []).slice(0, 10).map(n => `
-        <tr>
-          <td><strong style="color:var(--deep-navy);">${esc(n.department)}</strong></td>
-          <td class="peso" style="font-weight:600;">${esc(n.phoneDisplay)}</td>
-          <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType)}</span></td>
-          <td><span class="badge ${esc(n.status)}">${esc(n.status)}</span></td>
+      // Compute department counts for this request
+      const reqDeptCounts = {};
+      (r.numbers || []).forEach(n => {
+        const d = n.department || 'General';
+        reqDeptCounts[d] = (reqDeptCounts[d] || 0) + 1;
+      });
+
+      const deptPillsHtml = Object.entries(reqDeptCounts).map(([d, cnt]) => `
+        <span class="chip" style="font-size:11px;font-weight:600;background:#F0F3FF;color:var(--primary-blue);border:1px solid rgba(0,0,255,0.15);">
+          ${esc(d)}: <strong>${cnt}</strong>
+        </span>
+      `).join('');
+
+      const numRows = (r.numbers || []).map(n => `
+        <tr data-dept="${esc(n.department || 'General')}">
+          <td><strong style="color:var(--deep-navy);">${esc(n.department || 'General')}</strong></td>
+          <td class="peso" style="font-weight:600;">${esc(n.phoneDisplay || n.phoneE164)}</td>
+          <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType || 'Mobile')}</span></td>
+          <td><span class="badge ${esc(n.status || r.status)}">${esc(n.status || r.status)}</span></td>
+          ${isApproved ? `
+            <td style="text-align:right;">
+              <button type="button" class="btn sm p" onclick="event.stopPropagation();openSimulatedCall('${esc(n.phoneE164 || n.phoneDisplay)}')" style="padding:2px 8px;font-size:11px;">
+                Simulate Call &rarr;
+              </button>
+            </td>
+          ` : ''}
         </tr>
       `).join('');
 
@@ -1064,7 +1864,7 @@
 
             <div class="hint" style="margin-bottom:12px;">
               ${isApproved 
-                ? '<strong style="color:var(--status-approved);">● LIVE:</strong> Caller ID verified across all Philippine networks. Customers now see this brand badge and call reason.' 
+                ? '<strong style="color:var(--status-approved);">● LIVE:</strong> Caller ID verified across all Philippine networks. Customers now see this brand badge, call reason, and department.' 
                 : isPending 
                   ? '<strong style="color:var(--status-pending);">⏳ PENDING:</strong> Submitted to Operator Portal for review and authorization.' 
                   : '<strong style="color:var(--status-rejected);">✕ REJECTED:</strong> Please review operator remarks above, edit elements, and resubmit.'}
@@ -1072,16 +1872,30 @@
 
             <div class="grid-2" style="gap:20px;">
               <div>
-                <h4 style="margin-bottom:8px;">Assigned Numbers (${(r.numbers || []).length})</h4>
-                <div class="table-wrap">
-                  <table class="data-table" style="font-size:12px;">
-                    <thead>
-                      <tr><th>Department</th><th>Phone Number</th><th>Type</th><th>Status</th></tr>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
+                  <h4 style="margin:0;">Assigned Numbers (${(r.numbers || []).length})</h4>
+                  ${isApproved ? `<span class="hint" style="color:var(--status-approved);font-weight:600;">✓ Ready for simulated calls</span>` : ''}
+                </div>
+
+                <!-- Department Counts per Request -->
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+                  ${deptPillsHtml}
+                </div>
+
+                <div class="table-wrap" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
+                  <table class="data-table" style="font-size:12px;margin:0;">
+                    <thead style="position:sticky;top:0;background:#F8FAFD;z-index:1;">
+                      <tr>
+                        <th>Department</th>
+                        <th>Phone Number</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        ${isApproved ? `<th style="text-align:right;">Action</th>` : ''}
+                      </tr>
                     </thead>
                     <tbody>${numRows}</tbody>
                   </table>
                 </div>
-                ${(r.numbers || []).length > 10 ? `<div class="hint" style="margin-top:4px;">+ ${(r.numbers.length - 10)} more numbers</div>` : ''}
               </div>
 
               <div>
@@ -1266,14 +2080,22 @@
         pkgs = mergePackages(serverPkgs);
         renderPackagesGrid();
 
-        const [rq, lines] = await Promise.all([
+        const [rq, lines, nums] = await Promise.all([
           api('/api/requests'),
-          api('/api/department-lines').catch(() => [])
+          api('/api/department-lines').catch(() => []),
+          api('/api/numbers?all=1').catch(() => [])
         ]);
 
         myRequests = mergeRequests(rq);
         departmentLines = Array.isArray(lines) ? lines : [];
+        allKnownNumbers = Array.isArray(nums) ? nums : [];
+        populateDeptSelects();
         renderDepartmentLinesTable();
+
+        // If form has no numbers yet on initial load, auto-fill one unique number
+        if (isInitialLoad && assignedNumbers.length === 0) {
+          addSingleRandomNumber();
+        }
 
         // Detect real-time status transitions (e.g. Operator approves or rejects)
         if (!isInitialLoad) {

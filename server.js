@@ -138,9 +138,21 @@ app.get('/api/packages', wrap(async (req, res) => {
 }));
 app.get('/api/requests', only('operator', 'enterprise'), wrap(async (_req, res) => res.json(decorate(await db.readAll()))));
 // registered numbers (the customer phone uses this to offer demo callers) and the caller-ID lookup
-app.get('/api/numbers', wrap(async (_req, res) => {
+app.get('/api/numbers', wrap(async (req, res) => {
   const s = await db.readAll(); const st = id => (s.requests.find(r => r.requestId === id) || {}).status;
-  res.json(s.numbers.filter(n => activeStatus(st(n.requestId))).map(n => ({ phoneE164: n.phoneE164, phoneDisplay: n.phoneDisplay, department: n.department, brandName: n.brandName, status: st(n.requestId) })));
+  const includeAll = req.query.all === '1' || req.query.all === 'true';
+  const list = includeAll ? s.numbers : s.numbers.filter(n => activeStatus(st(n.requestId)));
+  res.json(list.map(n => ({
+    numberId: n.numberId,
+    requestId: n.requestId,
+    phoneE164: n.phoneE164,
+    phoneDisplay: n.phoneDisplay,
+    department: n.department,
+    brandName: n.brandName,
+    enterprise: n.brandName,
+    numberType: n.numberType,
+    status: st(n.requestId) || n.status || 'pending'
+  })));
 }));
 app.get('/api/lookup', wrap(async (req, res) => res.json(lookup(await db.readAll(), req.query.number))));
 
@@ -380,28 +392,63 @@ app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async 
     pkg = s.packages.find(p => p.status === 'published') || { name: 'Standard Pack', capacity: 500, pricePHP: 15000 };
   }
 
-  let deps; try { deps = JSON.parse(req.body.departments || '[]'); } catch (e) { deps = null; }
-  if (!Array.isArray(deps) || !deps.length) return res.status(400).json({ error: 'Add at least one department with a phone number' });
+  let deps = [];
+  try { deps = JSON.parse(req.body.departments || '[]'); } catch (e) { deps = []; }
+
+  // If numbers array was passed directly (e.g. [{ phone, department }])
+  if ((!Array.isArray(deps) || !deps.length) && req.body.numbers) {
+    try {
+      const rawList = JSON.parse(req.body.numbers || '[]');
+      if (Array.isArray(rawList) && rawList.length) {
+        const byDept = {};
+        for (const item of rawList) {
+          const dept = String(item.department || '').trim();
+          const p = item.phone || item.phoneE164 || item.phoneDisplay || '';
+          if (!byDept[dept]) byDept[dept] = [];
+          if (p) byDept[dept].push(p);
+        }
+        deps = Object.entries(byDept).map(([name, numbers]) => ({ name, numbers }));
+      }
+    } catch (e) {}
+  }
+
+  if (!Array.isArray(deps) || !deps.length) return res.status(400).json({ error: 'Add at least one calling number with an assigned department' });
   if (deps.length > 50) return res.status(400).json({ error: 'A registration can have up to 50 departments' });
 
   const reqStatus = id => (s.requests.find(r => r.requestId === id) || {}).status;
   const errors = [], seen = new Set(), numbers = [], requestId = db.newId('REQ'), now = new Date().toISOString();
   for (const d of deps) {
     const dept = String(d.name || '').trim().slice(0, 60);
-    if (!dept) { errors.push({ department: '(no name)', error: 'Every department needs a name' }); continue; }
+    if (!dept) { errors.push({ department: '(no name)', error: 'Every calling number must belong to a department' }); continue; }
     const list = (Array.isArray(d.numbers) ? d.numbers : String(d.numbers || '').split(/[\n,;]+/)).map(x => String(x).trim()).filter(Boolean);
-    if (!list.length) errors.push({ department: dept, error: 'Add at least one phone number' });
+    if (!list.length) errors.push({ department: dept, error: `Department "${dept}" has no phone numbers assigned` });
     for (const raw of list) {
       const r = PH.normalize(raw);
       if (!r.ok) { errors.push({ department: dept, input: raw, error: r.error }); continue; }
-      if (seen.has(r.e164)) { errors.push({ department: dept, input: raw, error: 'This number is listed twice' }); continue; }
-      const clash = s.numbers.find(n => n.phoneE164 === r.e164 && activeStatus(reqStatus(n.requestId)));
-      if (clash) { errors.push({ department: dept, input: raw, error: `Already registered by ${clash.brandName} (${reqStatus(clash.requestId)})` }); continue; }
+      if (seen.has(r.e164)) { errors.push({ department: dept, input: raw, error: 'This number is listed twice in this request' }); continue; }
+      // Check against ALL saved numbers (pending, approved, and rejected) across all enterprises
+      const clash = s.numbers.find(n => n.phoneE164 === r.e164);
+      if (clash) {
+        const st = reqStatus(clash.requestId) || clash.status || 'saved';
+        errors.push({ department: dept, input: raw, error: `Already registered by ${clash.brandName || 'another brand'} (${st})` });
+        continue;
+      }
       seen.add(r.e164);
-      numbers.push({ numberId: db.newId('NUM'), requestId, brandName, department: dept, phoneE164: r.e164, phoneDisplay: r.display, numberType: r.type, status: 'pending', createdAt: now });
+      numbers.push({
+        numberId: db.newId('NUM'),
+        requestId,
+        brandName,
+        enterprise: brandName,
+        department: dept,
+        phoneE164: r.e164,
+        phoneDisplay: r.display,
+        numberType: r.type,
+        status: 'pending',
+        createdAt: now
+      });
     }
   }
-  if (errors.length) return res.status(400).json({ error: 'Please fix the phone numbers', errors });
+  if (errors.length) return res.status(400).json({ error: 'Please fix the phone numbers and department assignments', errors });
   if (pkg && numbers.length > pkg.capacity) return res.status(400).json({ error: `The ${pkg.name} package allows up to ${pkg.capacity} numbers; you entered ${numbers.length}` });
 
   let file = null;
