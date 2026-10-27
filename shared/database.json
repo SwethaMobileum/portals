@@ -109,6 +109,20 @@
       "logoIncluded": false,
       "status": "published",
       "createdAt": "2026-10-26T14:41:17.414Z"
+    },
+    {
+      "packageId": "PKG-2e970224",
+      "name": "basic 3",
+      "capacity": 5,
+      "duration": "30 Days",
+      "pricePHP": 15000,
+      "brandedCalls": 50000,
+      "brand": true,
+      "callReason": true,
+      "tagline": true,
+      "logoIncluded": true,
+      "status": "published",
+      "createdAt": "2026-10-27T09:23:04.803Z"
     }
   ],
   "requests": [

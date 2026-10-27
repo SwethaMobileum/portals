@@ -328,7 +328,7 @@
                 <button type="button" class="btn sm" onclick="insertSavedDepartmentLineNumbers()" style="padding:2px 8px;font-size:11.5px;">+ Insert Saved Lines</button>
               </div>
             </div>
-            <textarea id="bulkNumbers" rows="6" placeholder="+63 917 123 4567&#10;0918-555-0101&#10;(02) 8123 4567&#10;Paste up to 500 phone numbers separated by newlines or commas..." oninput="parseAndValidateNumbers()" style="font-family:monospace;font-size:12.5px;line-height:1.4;"></textarea>
+            <textarea id="bulkNumbers" rows="6" placeholder="+63 917 123 4567&#10;0918-555-0101&#10;(02) 8123 4567&#10;Paste up to 500 phone numbers separated by newlines or commas..." oninput="handleBulkNumbersInput()" style="font-family:monospace;font-size:12.5px;line-height:1.4;"></textarea>
 
             <!-- Numbers Counter & Validation Bar -->
             <div class="num-counter-bar" id="numCounterBar">
@@ -828,18 +828,23 @@
         }
       });
 
-      $('cntTotalNums').textContent = list.length;
-      $('cntValidNums').textContent = valid;
-      $('cntInvalidNums').textContent = invalid;
-      $('cntDupNums').textContent = dup;
+      if ($('cntTotalNums')) $('cntTotalNums').textContent = list.length;
+      if ($('cntValidNums')) $('cntValidNums').textContent = valid;
+      if ($('cntInvalidNums')) $('cntInvalidNums').textContent = invalid;
+      if ($('cntDupNums')) $('cntDupNums').textContent = dup;
 
-      updateLivePreview();
       return { total: list.length, valid, invalid, dup, validNumbers: Array.from(seen) };
+    }
+
+    function handleBulkNumbersInput() {
+      parseAndValidateNumbers();
+      updateLivePreview();
     }
 
     function fillBulkSampleNumbers() {
       $('bulkNumbers').value = SAMPLE_50_NUMBERS.join('\n');
       parseAndValidateNumbers();
+      updateLivePreview();
       showToast('Sample Numbers Loaded', 'Loaded 25 sample Philippine numbers for demonstration.', 'info', 2500);
     }
 
@@ -853,6 +858,7 @@
       const combined = Array.from(new Set([...existing, ...toAdd]));
       $('bulkNumbers').value = combined.join('\n');
       parseAndValidateNumbers();
+      updateLivePreview();
       showToast('Department Lines Inserted', `Added numbers from ${departmentLines.length} saved department line(s).`, 'success');
     }
 
