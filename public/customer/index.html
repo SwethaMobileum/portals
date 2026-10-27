@@ -507,12 +507,14 @@
           </div>
         `;
       } else {
-        // UNKNOWN / PENDING / UNREGISTERED CALL
+        // UNKNOWN / PENDING / REJECTED / UNREGISTERED CALL
         const why = r.reason === 'pending'
           ? 'Not yet approved: ' + (r.brandName || 'Registration pending')
-          : r.reason === 'invalid'
-            ? (r.message || 'Invalid Philippine number')
-            : 'Unregistered number · Not a verified business';
+          : r.reason === 'rejected'
+            ? 'Rejected registration: ' + (r.brandName ? r.brandName + ' (Rejected)' : 'Unverified caller')
+            : r.reason === 'invalid'
+              ? (r.message || 'Invalid Philippine number')
+              : 'Unregistered number · Not a verified business';
 
         screen.className = 'phone-screen';
         screen.innerHTML = `

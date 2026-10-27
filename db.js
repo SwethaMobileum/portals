@@ -61,7 +61,7 @@ function getInMemoryFile(fileId) {
 const COLS = {
   Packages: ['packageId', 'name', 'capacity', 'duration', 'pricePHP', 'brandedCalls', 'brand', 'callReason', 'tagline', 'logoIncluded', 'status', 'createdAt'],
   Requests: ['requestId', 'packageId', 'brandName', 'callReason', 'tagline', 'status', 'remarks', 'logoFileId', 'createdAt', 'departments', 'numbersCount', 'monthlyFeePHP', 'vatPHP', 'totalPHP', 'logoLink', 'preview'],
-  Numbers: ['numberId', 'requestId', 'brandName', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'status', 'createdAt'],
+  Numbers: ['numberId', 'requestId', 'brandName', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'status', 'remarks', 'decidedAt', 'createdAt'],
   Files: ['fileId', 'requestId', 'originalName', 'storedName', 'storagePath', 'url', 'mimeType', 'sizeBytes', 'sha256', 'uploadedBy', 'uploadedAt', 'preview'],
   DepartmentLines: ['lineId', 'department', 'phoneE164', 'phoneDisplay', 'numberType', 'brandName', 'updatedAt']
 };
@@ -268,6 +268,18 @@ function readJournal() {
   }).filter(Boolean);
 }
 
+function deriveRequestStatus(numbers) {
+  if (!numbers || !numbers.length) return 'pending';
+  const statuses = numbers.map(n => String(n.status || 'pending').toLowerCase().trim());
+  const hasApproved = statuses.includes('approved');
+  const hasRejected = statuses.includes('rejected');
+  const hasPending = statuses.includes('pending');
+  if (hasApproved && !hasRejected && !hasPending) return 'approved';
+  if (hasRejected && !hasApproved && !hasPending) return 'rejected';
+  if (!hasApproved && !hasRejected && hasPending) return 'pending';
+  return 'partially approved';
+}
+
 function applyToState(s, e) {
   if (!s || !e) return;
   if (!s.packages) s.packages = [];
@@ -326,15 +338,72 @@ function applyToState(s, e) {
       }
     }
   }
+  if (e.t === 'number-decisions') {
+    const r = s.requests.find(x => x.requestId === e.requestId);
+    const decisionTime = e.at || new Date().toISOString();
+    for (const d of e.decisions || []) {
+      const n = s.numbers.find(x => (d.numberId && x.numberId === d.numberId) || (x.requestId === e.requestId && x.phoneE164 === d.phoneE164));
+      if (n) {
+        n.status = d.status;
+        n.remarks = d.remarks || '';
+        n.decidedAt = decisionTime;
+      }
+    }
+    if (r) {
+      const reqNumbers = s.numbers.filter(n => n.requestId === e.requestId);
+      r.status = deriveRequestStatus(reqNumbers);
+      if (e.remarks !== undefined && e.remarks !== '') r.remarks = e.remarks;
+    }
+  }
+  if (e.t === 'resubmit-numbers') {
+    const r = s.requests.find(x => x.requestId === e.requestId);
+    for (const item of e.numbers || []) {
+      const n = s.numbers.find(x => (item.numberId && x.numberId === item.numberId) || (x.requestId === e.requestId && x.phoneE164 === item.phoneE164));
+      if (n) {
+        if (item.department) n.department = item.department;
+        if (item.phoneE164) n.phoneE164 = item.phoneE164;
+        if (item.phoneDisplay) n.phoneDisplay = item.phoneDisplay;
+        if (item.numberType) n.numberType = item.numberType;
+        n.status = 'pending';
+        n.remarks = '';
+        n.decidedAt = null;
+      }
+    }
+    if (r) {
+      const reqNumbers = s.numbers.filter(n => n.requestId === e.requestId);
+      r.status = deriveRequestStatus(reqNumbers);
+    }
+  }
   if (e.t === 'status') {
     const r = s.requests.find(x => x.requestId === e.requestId);
-    if (r) {
-      r.status = e.status;
-      if (e.remarks !== undefined) r.remarks = e.remarks;
+    const decisionTime = e.at || new Date().toISOString();
+    if (e.decisions && Array.isArray(e.decisions)) {
+      for (const d of e.decisions) {
+        const n = s.numbers.find(x => (d.numberId && x.numberId === d.numberId) || (x.requestId === e.requestId && x.phoneE164 === d.phoneE164));
+        if (n) {
+          n.status = d.status;
+          n.remarks = d.remarks || '';
+          n.decidedAt = decisionTime;
+        }
+      }
+      if (r) {
+        const reqNumbers = s.numbers.filter(n => n.requestId === e.requestId);
+        r.status = deriveRequestStatus(reqNumbers);
+        if (e.remarks !== undefined) r.remarks = e.remarks;
+      }
+    } else {
+      if (r) {
+        r.status = e.status;
+        if (e.remarks !== undefined) r.remarks = e.remarks;
+      }
+      s.numbers.forEach(n => {
+        if (n.requestId === e.requestId) {
+          n.status = e.status;
+          if (e.status === 'rejected' && e.remarks) n.remarks = e.remarks;
+          n.decidedAt = decisionTime;
+        }
+      });
     }
-    s.numbers.forEach(n => {
-      if (n.requestId === e.requestId) n.status = e.status;
-    });
   }
   if (e.t === 'dept-line') {
     const idx = s.departmentLines.findIndex(l => l.lineId === e.row.lineId);
@@ -601,7 +670,52 @@ function applyToWorkbook(wb, e) {
       link(F.getCell(n, colIdx(F, 'url')), e.file.url); preview(wb, F, n, colIdx(F, 'preview'), e.file);
     }
   }
-  if (e.t === 'status') {
+  if (e.t === 'number-decisions' || (e.t === 'status' && e.decisions)) {
+    const decisions = e.decisions || [];
+    const decisionTime = e.at || new Date().toISOString();
+    const nc = colIdx(N, 'numberId'), rc = colIdx(N, 'requestId'), pc = colIdx(N, 'phoneE164'), sc = colIdx(N, 'status'), rmc = colIdx(N, 'remarks'), dc = colIdx(N, 'decidedAt');
+    for (const d of decisions) {
+      for (let r = 2; r <= N.rowCount; r++) {
+        const row = N.getRow(r);
+        const matchId = d.numberId && String(plain(row.getCell(nc).value)) === String(d.numberId);
+        const matchReqAndPhone = String(plain(row.getCell(rc).value)) === String(e.requestId) && String(plain(row.getCell(pc).value)) === String(d.phoneE164);
+        if (matchId || matchReqAndPhone) {
+          row.getCell(sc).value = d.status;
+          row.getCell(rmc).value = d.remarks || '';
+          row.getCell(dc).value = decisionTime;
+        }
+      }
+    }
+    const n = findRow(R, colIdx(R, 'requestId'), e.requestId);
+    if (n) {
+      if (e.requestStatus) {
+        R.getCell(n, colIdx(R, 'status')).value = e.requestStatus;
+      }
+      if (e.remarks !== undefined) {
+        R.getCell(n, colIdx(R, 'remarks')).value = e.remarks;
+      }
+    }
+  } else if (e.t === 'resubmit-numbers') {
+    const nc = colIdx(N, 'numberId'), rc = colIdx(N, 'requestId'), pc = colIdx(N, 'phoneE164'), sc = colIdx(N, 'status'), rmc = colIdx(N, 'remarks'), dc = colIdx(N, 'decidedAt'), deptc = colIdx(N, 'department');
+    for (const item of e.numbers || []) {
+      for (let r = 2; r <= N.rowCount; r++) {
+        const row = N.getRow(r);
+        const matchId = item.numberId && String(plain(row.getCell(nc).value)) === String(item.numberId);
+        const matchReqAndPhone = String(plain(row.getCell(rc).value)) === String(e.requestId) && String(plain(row.getCell(pc).value)) === String(item.phoneE164);
+        if (matchId || matchReqAndPhone) {
+          row.getCell(sc).value = 'pending';
+          row.getCell(rmc).value = '';
+          row.getCell(dc).value = '';
+          if (item.department) row.getCell(deptc).value = item.department;
+          if (item.phoneDisplay) row.getCell(colIdx(N, 'phoneDisplay')).value = item.phoneDisplay;
+        }
+      }
+    }
+    const n = findRow(R, colIdx(R, 'requestId'), e.requestId);
+    if (n && e.requestStatus) {
+      R.getCell(n, colIdx(R, 'status')).value = e.requestStatus;
+    }
+  } else if (e.t === 'status') {
     const n = findRow(R, colIdx(R, 'requestId'), e.requestId);
     if (n) {
       R.getCell(n, colIdx(R, 'status')).value = e.status;
@@ -609,10 +723,13 @@ function applyToWorkbook(wb, e) {
         R.getCell(n, colIdx(R, 'remarks')).value = e.remarks;
       }
     }
-    const rc = colIdx(N, 'requestId'), sc = colIdx(N, 'status');
+    const rc = colIdx(N, 'requestId'), sc = colIdx(N, 'status'), rmc = colIdx(N, 'remarks'), dc = colIdx(N, 'decidedAt');
+    const decisionTime = e.at || new Date().toISOString();
     for (let r = 2; r <= N.rowCount; r++) {
       if (String(plain(N.getRow(r).getCell(rc).value)) === String(e.requestId)) {
         N.getRow(r).getCell(sc).value = e.status;
+        if (e.status === 'rejected' && e.remarks) N.getRow(r).getCell(rmc).value = e.remarks;
+        N.getRow(r).getCell(dc).value = decisionTime;
       }
     }
   }
@@ -731,5 +848,6 @@ module.exports = {
   saveInMemoryFile,
   getInMemoryFile,
   getStoredFile,
-  saveStateToJson
+  saveStateToJson,
+  deriveRequestStatus
 };

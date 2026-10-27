@@ -197,20 +197,103 @@ async function enqueue(entry) {
     } finally {
       await session.endSession();
     }
+  } else if (entry.t === 'number-decisions') {
+    const session = clientInstance.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const at = entry.at || new Date().toISOString();
+        for (const d of entry.decisions || []) {
+          const filter = d.numberId ? { numberId: d.numberId } : { requestId: entry.requestId, phoneE164: d.phoneE164 };
+          await db.collection('numbers').updateOne(
+            filter,
+            { $set: { status: d.status, remarks: d.remarks || '', decidedAt: at } },
+            { session }
+          );
+        }
+        const allNums = await db.collection('numbers').find({ requestId: entry.requestId }, { session }).toArray();
+        const statuses = allNums.map(n => String(n.status || 'pending').toLowerCase().trim());
+        let finalStatus = 'partially approved';
+        if (statuses.length && statuses.every(s => s === 'approved')) finalStatus = 'approved';
+        else if (statuses.length && statuses.every(s => s === 'rejected')) finalStatus = 'rejected';
+        else if (statuses.length && statuses.every(s => s === 'pending')) finalStatus = 'pending';
+        const updateFields = { status: finalStatus };
+        if (entry.remarks !== undefined) updateFields.remarks = entry.remarks;
+        await db.collection('requests').updateOne(
+          { requestId: entry.requestId },
+          { $set: updateFields },
+          { session }
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
+  } else if (entry.t === 'resubmit-numbers') {
+    const session = clientInstance.startSession();
+    try {
+      await session.withTransaction(async () => {
+        for (const item of entry.numbers || []) {
+          const filter = item.numberId ? { numberId: item.numberId } : { requestId: entry.requestId, phoneE164: item.phoneE164 };
+          const setFields = { status: 'pending', remarks: '', decidedAt: null };
+          if (item.department) setFields.department = item.department;
+          if (item.phoneDisplay) setFields.phoneDisplay = item.phoneDisplay;
+          await db.collection('numbers').updateOne(filter, { $set: setFields }, { session });
+        }
+        const allNums = await db.collection('numbers').find({ requestId: entry.requestId }, { session }).toArray();
+        const statuses = allNums.map(n => String(n.status || 'pending').toLowerCase().trim());
+        let finalStatus = 'partially approved';
+        if (statuses.length && statuses.every(s => s === 'approved')) finalStatus = 'approved';
+        else if (statuses.length && statuses.every(s => s === 'rejected')) finalStatus = 'rejected';
+        else if (statuses.length && statuses.every(s => s === 'pending')) finalStatus = 'pending';
+        await db.collection('requests').updateOne(
+          { requestId: entry.requestId },
+          { $set: { status: finalStatus } },
+          { session }
+        );
+      });
+    } finally {
+      await session.endSession();
+    }
   } else if (entry.t === 'status') {
     const session = clientInstance.startSession();
     try {
       await session.withTransaction(async () => {
-        await db.collection('requests').updateOne(
-          { requestId: entry.requestId },
-          { $set: { status: entry.status } },
-          { session }
-        );
-        await db.collection('numbers').updateMany(
-          { requestId: entry.requestId },
-          { $set: { status: entry.status } },
-          { session }
-        );
+        const at = entry.at || new Date().toISOString();
+        if (entry.decisions && Array.isArray(entry.decisions)) {
+          for (const d of entry.decisions) {
+            const filter = d.numberId ? { numberId: d.numberId } : { requestId: entry.requestId, phoneE164: d.phoneE164 };
+            await db.collection('numbers').updateOne(
+              filter,
+              { $set: { status: d.status, remarks: d.remarks || '', decidedAt: at } },
+              { session }
+            );
+          }
+          const allNums = await db.collection('numbers').find({ requestId: entry.requestId }, { session }).toArray();
+          const statuses = allNums.map(n => String(n.status || 'pending').toLowerCase().trim());
+          let finalStatus = 'partially approved';
+          if (statuses.length && statuses.every(s => s === 'approved')) finalStatus = 'approved';
+          else if (statuses.length && statuses.every(s => s === 'rejected')) finalStatus = 'rejected';
+          else if (statuses.length && statuses.every(s => s === 'pending')) finalStatus = 'pending';
+          const updateFields = { status: finalStatus };
+          if (entry.remarks !== undefined) updateFields.remarks = entry.remarks;
+          await db.collection('requests').updateOne(
+            { requestId: entry.requestId },
+            { $set: updateFields },
+            { session }
+          );
+        } else {
+          await db.collection('requests').updateOne(
+            { requestId: entry.requestId },
+            { $set: { status: entry.status, remarks: entry.remarks || '' } },
+            { session }
+          );
+          const numSet = { status: entry.status, decidedAt: at };
+          if (entry.status === 'rejected' && entry.remarks) numSet.remarks = entry.remarks;
+          await db.collection('numbers').updateMany(
+            { requestId: entry.requestId },
+            { $set: numSet },
+            { session }
+          );
+        }
       });
     } finally {
       await session.endSession();

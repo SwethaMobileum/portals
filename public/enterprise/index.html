@@ -638,6 +638,34 @@
     </div>
   </div>
 
+  <!-- 5. Fix & Resubmit Rejected Numbers Modal -->
+  <div id="resubmitModal" class="confirm-modal-backdrop">
+    <div class="confirm-modal-box" style="max-width:640px;width:95%;">
+      <div class="confirm-modal-header">
+        <div>
+          <h3 class="confirm-modal-title" id="resubmitModalTitle">✎ Fix &amp; Resubmit Rejected Numbers</h3>
+          <div class="hint" id="resubmitModalSubtitle">Review operator rejection remarks, adjust numbers or departments, and resubmit.</div>
+        </div>
+        <button type="button" class="confirm-modal-close" onclick="closeResubmitModal()">&times;</button>
+      </div>
+      <div class="confirm-modal-body" style="display:flex;flex-direction:column;gap:12px;max-height:60vh;overflow-y:auto;padding-right:4px;">
+        <div style="padding:10px 14px;background:#F0F4FF;border:1px solid #D6E0FF;border-radius:var(--radius-sm);font-size:12px;color:var(--deep-navy);">
+          <strong>Note:</strong> Approved numbers in this brand request remain active and unaffected. Only the fixed numbers below will be re-submitted to the Operator for review.
+        </div>
+        <div id="resubmitNumbersList" style="display:flex;flex-direction:column;gap:12px;">
+          <!-- Dynamically populated rows for rejected numbers -->
+        </div>
+        <div id="resubmitModalErr" class="field-error" style="display:none;"></div>
+      </div>
+      <div class="confirm-modal-footer" style="display:flex;justify-content:space-between;align-items:center;">
+        <button type="button" class="btn sm" onclick="closeResubmitModal()">Cancel</button>
+        <button type="button" class="btn sm p" id="btnConfirmResubmit" onclick="submitResubmitNumbers()">
+          Resubmit Fixed Numbers &rarr;
+        </button>
+      </div>
+    </div>
+  </div>
+
 
   <script src="/shared/common.js"></script>
   <script src="/shared/ph.js"></script>
@@ -1716,6 +1744,15 @@
     function editAndResubmitRequest(requestId) {
       const r = myRequests.find(x => x.requestId === requestId);
       if (!r) return;
+
+      // If request has any approved numbers, redirect to openResubmitModal to protect approved numbers!
+      const hasApproved = (r.numbers || []).some(n => n.status === 'approved');
+      if (hasApproved) {
+        openResubmitModal(requestId);
+        showToast('Granular Resubmission', 'This request has approved numbers that are already active. Resubmit only the rejected numbers to keep approved numbers intact.', 'info', 5000);
+        return;
+      }
+
       $('brand').value = r.brandName || '';
       $('callReason').value = r.callReason || r.tagline || '';
 
@@ -1741,6 +1778,194 @@
       showToast('Form Populated', `Loaded ${assignedNumbers.length} numbers from request ${requestId}. Review and submit again.`, 'info');
     }
 
+    // ---------- Modal: Fix & Resubmit Rejected Numbers ----------
+    let currentResubmitRequestId = null;
+    let currentResubmitNumbers = [];
+
+    function openResubmitModal(requestId, focusNumberId) {
+      const r = myRequests.find(x => x.requestId === requestId);
+      if (!r) return;
+      currentResubmitRequestId = requestId;
+
+      // Filter to rejected numbers (or all numbers if entire request is rejected and numbers don't have explicit approved status)
+      const rejected = (r.numbers || []).filter(n => n.status === 'rejected' || (r.status === 'rejected' && n.status !== 'approved'));
+      if (!rejected.length) {
+        showToast('No Rejected Numbers', 'This brand request has no rejected numbers to fix.', 'info');
+        return;
+      }
+
+      currentResubmitNumbers = rejected.map(n => ({
+        numberId: n.numberId,
+        phone: n.phoneDisplay || n.phoneE164,
+        department: n.department || 'Customer Service',
+        remarks: n.remarks || r.remarks || '',
+        error: ''
+      }));
+
+      $('resubmitModalTitle').textContent = `✎ Fix & Resubmit Numbers · ${r.brandName}`;
+      $('resubmitModalSubtitle').textContent = `Request ${r.requestId} · ${rejected.length} rejected number${rejected.length > 1 ? 's' : ''}`;
+      $('btnConfirmResubmit').textContent = `Resubmit ${rejected.length} Fixed Number${rejected.length > 1 ? 's' : ''} →`;
+      $('resubmitModalErr').style.display = 'none';
+
+      renderResubmitNumbersList(focusNumberId);
+      $('resubmitModal').classList.add('open');
+    }
+
+    function closeResubmitModal() {
+      $('resubmitModal').classList.remove('open');
+      currentResubmitRequestId = null;
+      currentResubmitNumbers = [];
+    }
+
+    function renderResubmitNumbersList(focusNumberId) {
+      const container = $('resubmitNumbersList');
+      if (!container) return;
+      const depts = getEnterpriseDepartments();
+
+      container.innerHTML = currentResubmitNumbers.map((item, idx) => {
+        const deptOptions = depts.map(d =>
+          `<option value="${esc(d)}" ${d === item.department ? 'selected' : ''}>${esc(d)}</option>`
+        ).join('');
+
+        return `
+          <div style="background:#FFFFFF;border:1px solid var(--border);border-radius:var(--radius-md);padding:14px;box-shadow:var(--shadow-sm);" id="resubmit_card_${idx}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <span style="font-weight:700;font-size:12px;color:var(--text-muted);text-transform:uppercase;">Number #${idx + 1}</span>
+              <span class="badge rejected" style="font-size:10px;padding:2px 8px;">Rejected</span>
+            </div>
+
+            ${item.remarks ? `
+              <div style="margin-bottom:10px;padding:8px 12px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:var(--radius-sm);font-size:12px;color:#991B1B;">
+                <strong style="color:#DC2626;">Operator Remark:</strong> ${esc(item.remarks)}
+              </div>
+            ` : ''}
+
+            <div class="grid-2" style="gap:10px;">
+              <div class="form-group" style="margin:0;">
+                <label style="font-size:11.5px;font-weight:600;display:block;margin-bottom:4px;">Phone Number (+63)</label>
+                <input type="text"
+                       id="resubmit_phone_${idx}"
+                       value="${esc(item.phone)}"
+                       oninput="handleResubmitPhoneChange(${idx}, this.value)"
+                       placeholder="+63 9XX XXX XXXX"
+                       style="font-family:monospace;font-size:13px;font-weight:600;padding:6px 10px;border-radius:4px;border:1px solid ${item.error ? '#DC2626' : 'var(--border)'};background:${item.error ? '#FEF2F2' : '#FFF'};width:100%;">
+                ${item.error ? `<div class="field-error" style="display:block;margin-top:2px;font-size:11px;">${esc(item.error)}</div>` : ''}
+              </div>
+
+              <div class="form-group" style="margin:0;">
+                <label style="font-size:11.5px;font-weight:600;display:block;margin-bottom:4px;">Department</label>
+                <select id="resubmit_dept_${idx}"
+                        onchange="handleResubmitDeptChange(${idx}, this.value)"
+                        style="font-size:12.5px;font-weight:600;padding:6px 8px;border-radius:4px;border:1px solid var(--border);width:100%;">
+                  ${deptOptions}
+                </select>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      if (focusNumberId) {
+        const fIdx = currentResubmitNumbers.findIndex(n => n.numberId === focusNumberId);
+        if (fIdx >= 0) {
+          setTimeout(() => {
+            const el = $(`resubmit_phone_${fIdx}`);
+            if (el) el.focus();
+          }, 150);
+        }
+      }
+    }
+
+    function handleResubmitPhoneChange(idx, val) {
+      if (!currentResubmitNumbers[idx]) return;
+      currentResubmitNumbers[idx].phone = val;
+      const norm = PH.normalize(val);
+      currentResubmitNumbers[idx].error = norm.ok ? '' : norm.error;
+      const phoneInput = $(`resubmit_phone_${idx}`);
+      if (phoneInput) {
+        phoneInput.style.borderColor = currentResubmitNumbers[idx].error ? '#DC2626' : 'var(--border)';
+        phoneInput.style.background = currentResubmitNumbers[idx].error ? '#FEF2F2' : '#FFF';
+      }
+    }
+
+    function handleResubmitDeptChange(idx, val) {
+      if (!currentResubmitNumbers[idx]) return;
+      currentResubmitNumbers[idx].department = val;
+    }
+
+    async function submitResubmitNumbers() {
+      if (!currentResubmitRequestId) return;
+      const errEl = $('resubmitModalErr');
+      errEl.style.display = 'none';
+
+      // Validate all numbers
+      let hasError = false;
+      const payloadNumbers = [];
+      for (let i = 0; i < currentResubmitNumbers.length; i++) {
+        const item = currentResubmitNumbers[i];
+        const norm = PH.normalize(item.phone);
+        if (!norm.ok) {
+          item.error = norm.error;
+          hasError = true;
+        } else {
+          item.error = '';
+          payloadNumbers.push({
+            numberId: item.numberId,
+            phone: norm.e164,
+            department: item.department
+          });
+        }
+      }
+
+      if (hasError) {
+        renderResubmitNumbersList();
+        errEl.textContent = 'Please fix the phone number errors highlighted in red.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      const btn = $('btnConfirmResubmit');
+      btn.disabled = true;
+      btn.innerHTML = dotsLoader() + ' Resubmitting...';
+
+      try {
+        const res = await api(`/api/requests/${encodeURIComponent(currentResubmitRequestId)}/resubmit-numbers`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numbers: payloadNumbers })
+        });
+
+        // Also update local request in memory and localStorage
+        const r = myRequests.find(x => x.requestId === currentResubmitRequestId);
+        if (r && Array.isArray(r.numbers)) {
+          r.numbers.forEach(n => {
+            const m = payloadNumbers.find(p => (p.numberId && p.numberId === n.numberId) || p.phone === n.phoneE164);
+            if (m) {
+              n.phoneE164 = m.phone;
+              const norm = PH.normalize(m.phone);
+              n.phoneDisplay = norm.ok ? norm.display : m.phone;
+              n.department = m.department;
+              n.status = 'pending';
+              n.remarks = '';
+              n.decidedAt = null;
+            }
+          });
+          r.status = res.status || 'pending';
+          saveClientRequest(r);
+        }
+
+        showToast('Numbers Resubmitted', `Successfully re-submitted ${payloadNumbers.length} number(s) for review. Approved numbers remain active.`, 'success', 5000);
+        closeResubmitModal();
+        await load();
+      } catch (e) {
+        errEl.textContent = e.message || 'Failed to resubmit numbers';
+        errEl.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = `Resubmit Fixed Numbers (${payloadNumbers.length}) →`;
+      }
+    }
+
     function openSimulatedCall(num) {
       const norm = PH.normalize(num);
       const target = norm.ok ? norm.e164 : num;
@@ -1756,12 +1981,18 @@
 
       const isApproved = r.status === 'approved';
       const isRejected = r.status === 'rejected';
-      const isPending = r.status === 'pending';
+      const isPartial = r.status === 'partially approved' || r.status === 'partially_approved' || r.status === 'partial';
+      const isPending = !isApproved && !isRejected && !isPartial;
       const callReason = r.callReason || r.tagline || '';
+
+      const allNums = r.numbers || [];
+      const approvedNums = allNums.filter(n => n.status === 'approved');
+      const rejectedNums = allNums.filter(n => n.status === 'rejected');
+      const pendingNums = allNums.filter(n => !n.status || n.status === 'pending');
 
       // Compute department counts for this request
       const reqDeptCounts = {};
-      (r.numbers || []).forEach(n => {
+      allNums.forEach(n => {
         const d = n.department || 'General';
         reqDeptCounts[d] = (reqDeptCounts[d] || 0) + 1;
       });
@@ -1772,36 +2003,58 @@
         </span>
       `).join('');
 
-      const numRows = (r.numbers || []).map(n => `
-        <tr data-dept="${esc(n.department || 'General')}">
-          <td><strong style="color:var(--deep-navy);">${esc(n.department || 'General')}</strong></td>
-          <td class="peso" style="font-weight:600;">${esc(n.phoneDisplay || n.phoneE164)}</td>
-          <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType || 'Mobile')}</span></td>
-          <td><span class="badge ${esc(n.status || r.status)}">${esc(n.status || r.status)}</span></td>
-          ${isApproved ? `
-            <td style="text-align:right;">
-              <button type="button" class="btn sm p" onclick="event.stopPropagation();openSimulatedCall('${esc(n.phoneE164 || n.phoneDisplay)}')" style="padding:2px 8px;font-size:11px;">
-                Simulate Call &rarr;
-              </button>
-            </td>
-          ` : ''}
-        </tr>
-      `).join('');
+      const numRows = allNums.map(n => {
+        const numSt = n.status || r.status || 'pending';
+        const isNumApproved = numSt === 'approved';
+        const isNumRejected = numSt === 'rejected';
+        const isNumPending = numSt === 'pending';
 
-      const previewCard = r.numbers && r.numbers[0]
+        return `
+          <tr data-dept="${esc(n.department || 'General')}" style="${isNumRejected ? 'background:rgba(239,68,68,0.03);' : ''}">
+            <td><strong style="color:var(--deep-navy);">${esc(n.department || 'General')}</strong></td>
+            <td>
+              <div class="peso" style="font-weight:600;">${esc(n.phoneDisplay || n.phoneE164)}</div>
+              ${isNumRejected && (n.remarks || r.remarks) ? `
+                <div style="margin-top:4px;font-size:11.5px;color:#DC2626;background:#FEF2F2;padding:4px 8px;border-radius:4px;border:1px solid #FECACA;display:inline-block;max-width:320px;">
+                  <strong>Remark:</strong> ${esc(n.remarks || r.remarks)}
+                </div>
+              ` : ''}
+              ${n.decidedAt ? `<div class="hint" style="font-size:10px;margin-top:2px;">Decided: ${new Date(n.decidedAt).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila' })}</div>` : ''}
+            </td>
+            <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType || 'Mobile')}</span></td>
+            <td>${statusBadge(numSt)}</td>
+            <td style="text-align:right;">
+              ${isNumApproved ? `
+                <button type="button" class="btn sm p" onclick="event.stopPropagation();openSimulatedCall('${esc(n.phoneE164 || n.phoneDisplay)}')" style="padding:3px 10px;font-size:11px;">
+                  Simulate Call &rarr;
+                </button>
+              ` : isNumRejected ? `
+                <button type="button" class="btn sm" onclick="event.stopPropagation();openResubmitModal('${esc(r.requestId)}', '${esc(n.numberId)}')" style="padding:3px 10px;font-size:11px;color:#DC2626;border-color:#FCA5A5;background:#FFFFFF;font-weight:600;">
+                  ✎ Fix &amp; Resubmit &rarr;
+                </button>
+              ` : `
+                <span class="hint" style="font-size:11px;font-style:italic;">Awaiting Review</span>
+              `}
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      const previewNum = approvedNums[0] || allNums[0];
+      const previewCard = previewNum
         ? callerCard({
             brandName: r.brandName,
             callReason: callReason,
             tagline: callReason,
             logoUrl: r.previewable ? r.logoUrl : null,
-            department: r.numbers[0].department,
-            display: r.numbers[0].phoneDisplay,
-            verified: isApproved
+            department: previewNum.department,
+            display: previewNum.phoneDisplay,
+            verified: previewNum.status === 'approved'
           })
         : '';
 
       const cardId = 'card_' + r.requestId;
-      const isOpen = isPending || isApproved || isRejected;
+      const isOpen = isPending || isApproved || isRejected || isPartial;
 
       return `
         <div class="collapsible-card ${isOpen ? 'open' : ''}" id="${cardId}">
@@ -1812,29 +2065,47 @@
                 <div style="font-weight:700;font-size:15px;color:var(--deep-navy);">${esc(r.brandName)}</div>
                 <div class="hint">
                   <code>${esc(r.requestId)}</code> &middot; ${callReason ? `<span style="font-style:italic;color:var(--text-primary);">"${esc(callReason)}"</span> &middot; ` : ''}
-                  ${(r.numbers || []).length} assigned numbers
+                  ${allNums.length} assigned numbers ${isPartial ? `(${approvedNums.length} approved, ${rejectedNums.length} rejected)` : ''}
                 </div>
               </div>
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
-              <span class="badge ${esc(r.status)}" style="font-size:12.5px;padding:4px 12px;">${esc(r.status)}</span>
+              ${statusBadge(r.status)}
               <span class="collapsible-chevron">▼</span>
             </div>
           </div>
 
           <div class="collapsible-body">
-            ${isRejected && r.remarks ? `
+            ${isPartial ? `
+              <div style="margin-bottom:16px;padding:14px 16px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:var(--radius-md);color:#92400E;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                  <div>
+                    <strong style="color:#D97706;font-size:13.5px;display:flex;align-items:center;gap:6px;">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+                      Partially Approved: ${approvedNums.length} Approved &middot; ${rejectedNums.length} Rejected
+                    </strong>
+                    <div style="margin-top:4px;font-size:12.5px;color:#78350F;">
+                      Approved numbers are active and verified across Philippine networks. You can fix and re-submit only the rejected numbers without affecting your approved numbers.
+                    </div>
+                  </div>
+                  <button type="button" class="btn sm p" onclick="openResubmitModal('${esc(r.requestId)}')" style="font-weight:600;white-space:nowrap;">
+                    ✎ Fix &amp; Resubmit Rejected Numbers (${rejectedNums.length}) &rarr;
+                  </button>
+                </div>
+              </div>
+            ` : isRejected ? `
               <div style="margin-bottom:16px;padding:14px 16px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:var(--radius-md);color:#991B1B;">
-                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
                   <div>
                     <strong style="color:#DC2626;font-size:13.5px;display:flex;align-items:center;gap:6px;">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
                       Operator Rejection Remarks:
                     </strong>
-                    <div style="margin-top:6px;font-size:13px;background:#FFFFFF;padding:8px 12px;border-radius:4px;border:1px solid #FECACA;white-space:pre-wrap;">${esc(r.remarks)}</div>
+                    ${r.remarks ? `<div style="margin-top:6px;font-size:13px;background:#FFFFFF;padding:8px 12px;border-radius:4px;border:1px solid #FECACA;white-space:pre-wrap;">${esc(r.remarks)}</div>` : ''}
+                    <div style="margin-top:4px;font-size:12px;color:#7F1D1D;">Review remarks per number below, adjust details, and resubmit.</div>
                   </div>
-                  <button type="button" class="btn sm" onclick="editAndResubmitRequest('${esc(r.requestId)}')" style="background:#FFFFFF;border-color:#DC2626;color:#DC2626;font-weight:600;">
-                    ✎ Edit &amp; Resubmit Request &rarr;
+                  <button type="button" class="btn sm" onclick="openResubmitModal('${esc(r.requestId)}')" style="background:#FFFFFF;border-color:#DC2626;color:#DC2626;font-weight:600;white-space:nowrap;">
+                    ✎ Fix &amp; Resubmit Numbers &rarr;
                   </button>
                 </div>
               </div>
@@ -1842,17 +2113,19 @@
 
             <div class="hint" style="margin-bottom:12px;">
               ${isApproved 
-                ? '<strong style="color:var(--status-approved);">● LIVE:</strong> Caller ID verified across all Philippine networks. Customers now see this brand badge, call reason, and department.' 
-                : isPending 
-                  ? '<strong style="color:var(--status-pending);">⏳ PENDING:</strong> Submitted to Operator Portal for review and authorization.' 
-                  : '<strong style="color:var(--status-rejected);">✕ REJECTED:</strong> Please review operator remarks above, edit elements, and resubmit.'}
+                ? `<strong style="color:var(--status-approved);">● LIVE:</strong> All ${allNums.length} numbers verified across Philippine networks. Customers now see this brand badge, call reason, and department.` 
+                : isPartial
+                  ? `<strong style="color:var(--primary-blue);">● PARTIALLY ACTIVE:</strong> ${approvedNums.length} approved numbers are live for customer calls. ${rejectedNums.length} rejected numbers require fixes.`
+                  : isPending 
+                    ? '<strong style="color:var(--status-pending);">⏳ PENDING:</strong> Submitted to Operator Portal for review and authorization.' 
+                    : '<strong style="color:var(--status-rejected);">✕ REJECTED:</strong> Please review operator remarks above, edit elements, and resubmit.'}
             </div>
 
             <div class="grid-2" style="gap:20px;">
               <div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:6px;">
-                  <h4 style="margin:0;">Assigned Numbers (${(r.numbers || []).length})</h4>
-                  ${isApproved ? `<span class="hint" style="color:var(--status-approved);font-weight:600;">✓ Ready for simulated calls</span>` : ''}
+                  <h4 style="margin:0;">Assigned Numbers (${allNums.length})</h4>
+                  ${approvedNums.length ? `<span class="hint" style="color:var(--status-approved);font-weight:600;">✓ ${approvedNums.length} Ready for simulated calls</span>` : ''}
                 </div>
 
                 <!-- Department Counts per Request -->
@@ -1860,7 +2133,7 @@
                   ${deptPillsHtml}
                 </div>
 
-                <div class="table-wrap" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
+                <div class="table-wrap" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">
                   <table class="data-table" style="font-size:12px;margin:0;">
                     <thead style="position:sticky;top:0;background:#F8FAFD;z-index:1;">
                       <tr>
@@ -1868,7 +2141,7 @@
                         <th>Phone Number</th>
                         <th>Type</th>
                         <th>Status</th>
-                        ${isApproved ? `<th style="text-align:right;">Action</th>` : ''}
+                        <th style="text-align:right;">Action</th>
                       </tr>
                     </thead>
                     <tbody>${numRows}</tbody>
@@ -2008,7 +2281,7 @@
           numList.push({
             ...n,
             brandName: r.brandName,
-            status: r.status
+            status: n.status || r.status || 'pending'
           });
         });
       });
@@ -2040,7 +2313,7 @@
           <td><span class="chip" style="font-size:11px;">${esc(n.numberType)}</span></td>
           <td><strong style="color:var(--deep-navy);">${esc(n.department)}</strong></td>
           <td>${esc(n.brandName)}</td>
-          <td><span class="badge ${esc(n.status)}">${esc(n.status)}</span></td>
+          <td>${statusBadge(n.status)}</td>
         </tr>
       `).join('');
     }

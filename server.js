@@ -81,16 +81,29 @@ function decorate(s) {
   const files = Object.fromEntries((s.files || []).map(f => [f.fileId, f])), pk = Object.fromEntries((s.packages || []).map(p => [p.packageId, p]));
   return (s.requests || []).map(r => {
     const f = files[r.logoFileId], p = pk[r.packageId];
-    const numbers = (s.numbers || []).filter(n => n.requestId === r.requestId).map(n => ({ numberId: n.numberId, department: n.department, phoneE164: n.phoneE164, phoneDisplay: n.phoneDisplay, numberType: n.numberType, status: n.status }));
+    const numbers = (s.numbers || []).filter(n => n.requestId === r.requestId).map(n => ({
+      numberId: n.numberId,
+      department: n.department,
+      phoneE164: n.phoneE164,
+      phoneDisplay: n.phoneDisplay,
+      numberType: n.numberType,
+      status: n.status || 'pending',
+      remarks: n.remarks || '',
+      decidedAt: n.decidedAt || null,
+      createdAt: n.createdAt
+    }));
+    const derivedStatus = numbers.length ? db.deriveRequestStatus(numbers) : (r.status || 'pending');
     const logoUrl = f ? `/api/files/${f.fileId}` : (r.logoUrl || null);
     const callReason = r.callReason || r.tagline || '';
     return {
       ...r,
+      status: derivedStatus,
       callReason,
       tagline: callReason,
       remarks: r.remarks || '',
       packageName: p ? p.name : '',
       numbers,
+      numbersCount: numbers.length,
       fileName: f ? f.originalName : null,
       mimeType: f ? f.mimeType : null,
       sizeBytes: f ? f.sizeBytes : null,
@@ -104,11 +117,23 @@ function lookup(s, input) {
   const r = PH.normalize(input);
   if (!r.ok) return { registered: false, reason: 'invalid', message: r.error };
   const reqOf = id => s.requests.find(x => x.requestId === id);
-  const hit = s.numbers.find(n => n.phoneE164 === r.e164 && reqOf(n.requestId) && activeStatus(reqOf(n.requestId).status));
+  const hit = s.numbers.find(n => n.phoneE164 === r.e164);
   const base = { e164: r.e164, display: r.display, numberType: r.type };
   if (!hit) return { ...base, registered: false, reason: 'unregistered' };
   const q = reqOf(hit.requestId);
-  if (q.status !== 'approved') return { ...base, registered: false, reason: 'pending', brandName: q.brandName };
+  if (!q) return { ...base, registered: false, reason: 'unregistered' };
+  
+  // Only numbers with status 'approved' can show the brand and verified state
+  if (hit.status !== 'approved') {
+    return {
+      ...base,
+      registered: false,
+      reason: hit.status === 'rejected' ? 'rejected' : 'pending',
+      brandName: q.brandName,
+      message: hit.status === 'rejected' ? 'Number registration was rejected' : 'Number registration is pending approval'
+    };
+  }
+
   const f = (s.files || []).find(x => x.fileId === q.logoFileId);
   const logoUrl = f && f.mimeType && f.mimeType.startsWith('image/') && PREVIEWABLE.has(f.mimeType) ? `/api/files/${f.fileId}` : (q.logoUrl || null);
   const callReason = q.callReason || q.tagline || '';
@@ -139,9 +164,9 @@ app.get('/api/packages', wrap(async (req, res) => {
 app.get('/api/requests', only('operator', 'enterprise'), wrap(async (_req, res) => res.json(decorate(await db.readAll()))));
 // registered numbers (the customer phone uses this to offer demo callers) and the caller-ID lookup
 app.get('/api/numbers', wrap(async (req, res) => {
-  const s = await db.readAll(); const st = id => (s.requests.find(r => r.requestId === id) || {}).status;
+  const s = await db.readAll();
   const includeAll = req.query.all === '1' || req.query.all === 'true';
-  const list = includeAll ? s.numbers : s.numbers.filter(n => activeStatus(st(n.requestId)));
+  const list = includeAll ? s.numbers : s.numbers.filter(n => n.status === 'approved');
   res.json(list.map(n => ({
     numberId: n.numberId,
     requestId: n.requestId,
@@ -151,7 +176,9 @@ app.get('/api/numbers', wrap(async (req, res) => {
     brandName: n.brandName,
     enterprise: n.brandName,
     numberType: n.numberType,
-    status: st(n.requestId) || n.status || 'pending'
+    status: n.status || 'pending',
+    remarks: n.remarks || '',
+    decidedAt: n.decidedAt || null
   })));
 }));
 app.get('/api/lookup', wrap(async (req, res) => res.json(lookup(await db.readAll(), req.query.number))));
@@ -232,16 +259,131 @@ app.delete('/api/packages/:id', only('operator', 'enterprise'), wrap(async (req,
   res.json({ packageId: pkg.packageId, status: 'removed' });
 }));
 
-// OPERATOR: approve / reject
-app.patch('/api/requests/:id/status', only('operator'), wrap(async (req, res) => {
-  const { status, remarks = '' } = req.body || {};
-  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'status must be approved or rejected' });
+// OPERATOR: approve / reject individual numbers or whole request
+async function handleOperatorDecision(req, res) {
+  const { decisions, status, remarks = '', requestRemarks = '' } = req.body || {};
+  const s = await db.readAll();
+  const r = s.requests.find(x => x.requestId === req.params.id);
+  if (!r) return res.status(404).json({ error: 'Brand request not found' });
+  const existingNumbers = s.numbers.filter(n => n.requestId === req.params.id);
+
+  if (Array.isArray(decisions) && decisions.length > 0) {
+    const cleanDecisions = [];
+    for (const d of decisions) {
+      const st = String(d.status || '').toLowerCase().trim();
+      if (!['approved', 'rejected'].includes(st)) {
+        return res.status(400).json({ error: `Invalid status "${d.status}". Status must be approved or rejected.` });
+      }
+      const rem = String(d.remarks || '').trim();
+      if (st === 'rejected' && !rem) {
+        return res.status(400).json({ error: 'Rejection remarks are required for all unticked/rejected numbers.' });
+      }
+      cleanDecisions.push({
+        numberId: d.numberId,
+        phoneE164: d.phoneE164,
+        status: st,
+        remarks: st === 'rejected' ? rem.slice(0, 500) : ''
+      });
+    }
+
+    const updatedNumbers = existingNumbers.map(n => {
+      const d = cleanDecisions.find(item => (item.numberId && item.numberId === n.numberId) || (item.phoneE164 && item.phoneE164 === n.phoneE164));
+      return d ? { ...n, status: d.status, remarks: d.remarks } : n;
+    });
+
+    const finalReqStatus = db.deriveRequestStatus(updatedNumbers);
+    const overallRemarks = String(requestRemarks || remarks || '').trim().slice(0, 500);
+
+    await db.enqueue({
+      t: 'number-decisions',
+      requestId: req.params.id,
+      decisions: cleanDecisions,
+      requestStatus: finalReqStatus,
+      remarks: overallRemarks,
+      at: new Date().toISOString()
+    });
+
+    return res.json({
+      requestId: req.params.id,
+      status: finalReqStatus,
+      remarks: overallRemarks,
+      decisions: cleanDecisions
+    });
+  }
+
+  // Fallback for single request status update
+  if (!['approved', 'rejected', 'partially approved'].includes(status)) {
+    return res.status(400).json({ error: 'status must be approved or rejected' });
+  }
   if (status === 'rejected' && (!remarks || !String(remarks).trim())) {
     return res.status(400).json({ error: 'Rejection remarks are required when rejecting a brand request' });
   }
   const cleanRemarks = remarks ? String(remarks).trim().slice(0, 500) : '';
   await db.enqueue({ t: 'status', requestId: req.params.id, status, remarks: cleanRemarks, at: new Date().toISOString() });
   res.json({ requestId: req.params.id, status, remarks: cleanRemarks });
+}
+
+app.patch('/api/requests/:id/status', only('operator'), wrap(handleOperatorDecision));
+app.post('/api/requests/:id/decision', only('operator'), wrap(handleOperatorDecision));
+
+// ENTERPRISE: fix and resubmit rejected numbers
+app.post('/api/requests/:id/resubmit-numbers', only('enterprise', 'operator'), wrap(async (req, res) => {
+  const { numbers = [] } = req.body || {};
+  if (!Array.isArray(numbers) || !numbers.length) {
+    return res.status(400).json({ error: 'At least one number is required to resubmit' });
+  }
+  const s = await db.readAll();
+  const r = s.requests.find(x => x.requestId === req.params.id);
+  if (!r) return res.status(404).json({ error: 'Brand request not found' });
+
+  const existingNumbers = s.numbers.filter(n => n.requestId === req.params.id);
+  const validated = [];
+  const errors = [];
+  for (const item of numbers) {
+    const raw = item.phone || item.phoneE164 || item.phoneDisplay || '';
+    const norm = PH.normalize(raw);
+    if (!norm.ok) {
+      errors.push({ number: raw, error: norm.error });
+      continue;
+    }
+    const dept = String(item.department || '').trim().slice(0, 60);
+    if (!dept) {
+      errors.push({ number: raw, error: 'Department is required' });
+      continue;
+    }
+    const clash = s.numbers.find(n => n.phoneE164 === norm.e164 && n.requestId !== req.params.id && n.status === 'approved');
+    if (clash) {
+      errors.push({ number: raw, error: `Already registered by ${clash.brandName || 'another brand'}` });
+      continue;
+    }
+    validated.push({
+      numberId: item.numberId,
+      phoneE164: norm.e164,
+      phoneDisplay: norm.display,
+      department: dept,
+      numberType: norm.type
+    });
+  }
+  if (errors.length) {
+    return res.status(400).json({ error: 'Please fix phone number errors', errors });
+  }
+
+  const updatedReqNumbers = existingNumbers.map(n => {
+    const match = validated.find(v => (v.numberId && v.numberId === n.numberId) || v.phoneE164 === n.phoneE164);
+    if (match) return { ...n, ...match, status: 'pending', remarks: '', decidedAt: null };
+    return n;
+  });
+  const newStatus = db.deriveRequestStatus(updatedReqNumbers);
+
+  await db.enqueue({
+    t: 'resubmit-numbers',
+    requestId: req.params.id,
+    numbers: validated,
+    requestStatus: newStatus,
+    at: new Date().toISOString()
+  });
+
+  res.json({ ok: true, requestId: req.params.id, status: newStatus, resubmittedCount: validated.length });
 }));
 
 // SERVERLESS & CLIENT SYNC: Re-hydrates requests, status overrides, packages, and removals across instances
@@ -315,7 +457,9 @@ app.post('/api/sync', wrap(async (req, res) => {
         phoneE164: n.phoneE164,
         phoneDisplay: n.phoneDisplay,
         numberType: n.numberType,
-        status: finalStatus,
+        status: n.status || finalStatus,
+        remarks: n.remarks || '',
+        decidedAt: n.decidedAt || null,
         createdAt: row.createdAt
       }));
       if (r.logoFileId && r.logoUrl && r.logoUrl.startsWith('data:')) {
@@ -334,10 +478,20 @@ app.post('/api/sync', wrap(async (req, res) => {
   }
 
   for (const [reqId, override] of Object.entries(statusOverrides)) {
-    const status = typeof override === 'string' ? override : override?.status;
-    const remarks = typeof override === 'object' ? (override?.remarks || '') : '';
-    if (['approved', 'rejected'].includes(status)) {
-      await db.enqueue({ t: 'status', requestId: reqId, status, remarks, at: new Date().toISOString() });
+    if (typeof override === 'object' && Array.isArray(override?.decisions) && override.decisions.length > 0) {
+      await db.enqueue({
+        t: 'number-decisions',
+        requestId: reqId,
+        decisions: override.decisions,
+        remarks: override.remarks || '',
+        at: override.at || new Date().toISOString()
+      });
+    } else {
+      const status = typeof override === 'string' ? override : override?.status;
+      const remarks = typeof override === 'object' ? (override?.remarks || '') : '';
+      if (['approved', 'rejected', 'partially approved'].includes(status)) {
+        await db.enqueue({ t: 'status', requestId: reqId, status, remarks, at: new Date().toISOString() });
+      }
     }
   }
 
@@ -426,9 +580,9 @@ app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async 
       const r = PH.normalize(raw);
       if (!r.ok) { errors.push({ department: dept, input: raw, error: r.error }); continue; }
       if (seen.has(r.e164)) { errors.push({ department: dept, input: raw, error: 'This number is listed twice in this request' }); continue; }
-      // Check against ALL saved numbers (pending, approved, and rejected) across all enterprises
+      // Check against active registered numbers across other enterprises
       const clash = s.numbers.find(n => n.phoneE164 === r.e164);
-      if (clash) {
+      if (clash && clash.status !== 'rejected') {
         const st = reqStatus(clash.requestId) || clash.status || 'saved';
         errors.push({ department: dept, input: raw, error: `Already registered by ${clash.brandName || 'another brand'} (${st})` });
         continue;
@@ -444,6 +598,8 @@ app.post('/api/requests', only('enterprise'), upload.single('logo'), wrap(async 
         phoneDisplay: r.display,
         numberType: r.type,
         status: 'pending',
+        remarks: '',
+        decidedAt: null,
         createdAt: now
       });
     }

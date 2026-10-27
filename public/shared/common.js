@@ -409,10 +409,23 @@ function getStatusOverrides() {
   return {};
 }
 
-function saveStatusOverride(requestId, status, remarks = '') {
+function statusBadge(status) {
+  const norm = String(status || 'pending').toLowerCase().trim();
+  const cls = (norm === 'partially approved' || norm === 'partially_approved') ? 'partially-approved' : norm;
+  const label = (norm === 'partially approved' || norm === 'partially_approved') ? 'Partially Approved' : (norm.charAt(0).toUpperCase() + norm.slice(1));
+  return `<span class="badge ${cls}" data-status="${norm}">${label}</span>`;
+}
+
+function saveStatusOverride(requestId, status, remarks = '', numberDecisions = null) {
   if (!requestId || !status) return;
   const overrides = getStatusOverrides();
-  overrides[requestId] = { status, remarks: remarks || '' };
+  const now = new Date().toISOString();
+  overrides[requestId] = {
+    status,
+    remarks: remarks || '',
+    decisions: numberDecisions,
+    at: now
+  };
   try {
     localStorage.setItem(MOBILEUM_STATUS_KEY, JSON.stringify(overrides));
   } catch (e) {}
@@ -422,12 +435,27 @@ function saveStatusOverride(requestId, status, remarks = '') {
   if (req) {
     req.status = status;
     if (remarks) req.remarks = remarks;
-    if (req.numbers) req.numbers.forEach(n => { n.status = status; });
+    if (numberDecisions && Array.isArray(numberDecisions) && req.numbers) {
+      numberDecisions.forEach(d => {
+        const n = req.numbers.find(x => (d.numberId && x.numberId === d.numberId) || (x.phoneE164 && x.phoneE164 === d.phoneE164));
+        if (n) {
+          n.status = d.status;
+          n.remarks = d.remarks || '';
+          n.decidedAt = now;
+        }
+      });
+    } else if (req.numbers) {
+      req.numbers.forEach(n => {
+        n.status = status;
+        if (status === 'rejected' && remarks) n.remarks = remarks;
+        n.decidedAt = now;
+      });
+    }
     try { localStorage.setItem(MOBILEUM_SYNC_KEY, JSON.stringify(list)); } catch (e) {}
   }
 
   if (syncChannel) {
-    try { syncChannel.postMessage({ type: 'status_override', requestId, status, remarks }); } catch (e) {}
+    try { syncChannel.postMessage({ type: 'status_override', requestId, status, remarks, numberDecisions }); } catch (e) {}
   }
   syncWithServer();
 }
@@ -449,7 +477,16 @@ function mergeRequests(serverRequests) {
         const rem = typeof ov === 'object' && ov.remarks ? ov.remarks : (copy.remarks || '');
         copy.status = st;
         if (rem) copy.remarks = rem;
-        if (copy.numbers) copy.numbers.forEach(n => { n.status = st; });
+        if (typeof ov === 'object' && Array.isArray(ov.decisions) && copy.numbers) {
+          ov.decisions.forEach(d => {
+            const n = copy.numbers.find(x => (d.numberId && x.numberId === d.numberId) || (x.phoneE164 && x.phoneE164 === d.phoneE164));
+            if (n) {
+              n.status = d.status;
+              n.remarks = d.remarks || '';
+              n.decidedAt = ov.at || n.decidedAt;
+            }
+          });
+        }
       }
       map.set(copy.requestId, copy);
     }
@@ -465,7 +502,16 @@ function mergeRequests(serverRequests) {
 
     if (!map.has(clientReq.requestId)) {
       const copy = { ...clientReq, status: st, remarks: rem };
-      if (copy.numbers) copy.numbers.forEach(n => { n.status = st; });
+      if (typeof ov === 'object' && Array.isArray(ov.decisions) && copy.numbers) {
+        ov.decisions.forEach(d => {
+          const n = copy.numbers.find(x => (d.numberId && x.numberId === d.numberId) || (x.phoneE164 && x.phoneE164 === d.phoneE164));
+          if (n) {
+            n.status = d.status;
+            n.remarks = d.remarks || '';
+            n.decidedAt = ov.at || n.decidedAt;
+          }
+        });
+      }
       map.set(copy.requestId, copy);
       missingFromServer = true;
     } else {
@@ -476,7 +522,16 @@ function mergeRequests(serverRequests) {
       if (ov) {
         existing.status = st;
         if (rem) existing.remarks = rem;
-        if (existing.numbers) existing.numbers.forEach(n => { n.status = st; });
+        if (typeof ov === 'object' && Array.isArray(ov.decisions) && existing.numbers) {
+          ov.decisions.forEach(d => {
+            const n = existing.numbers.find(x => (d.numberId && x.numberId === d.numberId) || (x.phoneE164 && x.phoneE164 === d.phoneE164));
+            if (n) {
+              n.status = d.status;
+              n.remarks = d.remarks || '';
+              n.decidedAt = ov.at || n.decidedAt;
+            }
+          });
+        }
       }
     }
   });
@@ -496,16 +551,29 @@ function mergeNumbers(serverNumbers) {
 
   clientRequests.forEach(r => {
     const ov = overrides[r.requestId];
-    const status = ov ? (typeof ov === 'string' ? ov : ov.status) : r.status;
-    if (status === 'approved' && Array.isArray(r.numbers)) {
+    if (Array.isArray(r.numbers)) {
       r.numbers.forEach(n => {
-        if (!list.some(x => x.phoneE164 === n.phoneE164) && !deletedNums.includes(n.phoneE164)) {
+        let numStatus = n.status || 'pending';
+        let numRemarks = n.remarks || '';
+        if (ov && typeof ov === 'object' && Array.isArray(ov.decisions)) {
+          const d = ov.decisions.find(item => (item.numberId && item.numberId === n.numberId) || (item.phoneE164 && item.phoneE164 === n.phoneE164));
+          if (d) {
+            numStatus = d.status;
+            numRemarks = d.remarks || '';
+          }
+        } else if (ov) {
+          numStatus = typeof ov === 'string' ? ov : (ov.status || numStatus);
+        }
+        if (numStatus === 'approved' && !list.some(x => x.phoneE164 === n.phoneE164) && !deletedNums.includes(n.phoneE164)) {
           list.push({
+            numberId: n.numberId,
+            requestId: r.requestId,
             phoneE164: n.phoneE164,
             phoneDisplay: n.phoneDisplay,
             department: n.department,
             brandName: r.brandName,
-            status: 'approved'
+            status: 'approved',
+            remarks: numRemarks
           });
         }
       });
@@ -523,22 +591,31 @@ function lookupLocalNumber(phoneInput) {
 
   for (const r of clientRequests) {
     const ov = overrides[r.requestId];
-    const status = ov ? (typeof ov === 'string' ? ov : ov.status) : r.status;
-    if (status === 'approved' && Array.isArray(r.numbers)) {
+    if (Array.isArray(r.numbers)) {
       const numHit = r.numbers.find(n => n.phoneE164 === e164);
       if (numHit) {
-        const reason = r.callReason || r.tagline || '';
-        return {
-          registered: true,
-          verified: true,
-          brandName: r.brandName,
-          callReason: reason,
-          tagline: reason,
-          department: numHit.department,
-          display: numHit.phoneDisplay || (norm && norm.display) || e164,
-          logoUrl: r.logoUrl || null,
-          numberType: numHit.numberType || (norm && norm.type) || 'Phone'
-        };
+        let numStatus = numHit.status || 'pending';
+        if (ov && typeof ov === 'object' && Array.isArray(ov.decisions)) {
+          const d = ov.decisions.find(item => (item.numberId && item.numberId === numHit.numberId) || (item.phoneE164 && item.phoneE164 === numHit.phoneE164));
+          if (d) numStatus = d.status;
+        } else if (ov) {
+          numStatus = typeof ov === 'string' ? ov : (ov.status || numStatus);
+        }
+        // ONLY approved numbers show the verified branded caller ID
+        if (numStatus === 'approved') {
+          const reason = r.callReason || r.tagline || '';
+          return {
+            registered: true,
+            verified: true,
+            brandName: r.brandName,
+            callReason: reason,
+            tagline: reason,
+            department: numHit.department,
+            display: numHit.phoneDisplay || (norm && norm.display) || e164,
+            logoUrl: r.logoUrl || null,
+            numberType: numHit.numberType || (norm && norm.type) || 'Phone'
+          };
+        }
       }
     }
   }

@@ -867,6 +867,15 @@ input[type="checkbox"] {
   border-color: var(--status-rejected-border);
 }
 
+.badge.partially-approved,
+.badge.partially_approved,
+.badge.partial,
+.badge[data-status="partially approved"] {
+  background-color: #FFF7ED;
+  color: #C2410C;
+  border-color: #FFEDD5;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

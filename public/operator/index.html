@@ -165,6 +165,7 @@
       <div class="filter-bar">
         <button class="filter-chip active" data-filter="all" onclick="setReqFilter('all', this)">All (<span id="cnt_all">0</span>)</button>
         <button class="filter-chip" data-filter="pending" onclick="setReqFilter('pending', this)">Pending (<span id="cnt_pending">0</span>)</button>
+        <button class="filter-chip" data-filter="partially approved" onclick="setReqFilter('partially approved', this)">Partially Approved (<span id="cnt_partial">0</span>)</button>
         <button class="filter-chip" data-filter="approved" onclick="setReqFilter('approved', this)">Approved (<span id="cnt_approved">0</span>)</button>
         <button class="filter-chip" data-filter="rejected" onclick="setReqFilter('rejected', this)">Rejected (<span id="cnt_rejected">0</span>)</button>
       </div>
@@ -402,70 +403,211 @@
       });
     }
 
-    // Modal & prompt for required rejection remarks
-    let pendingRejectReqId = null;
+    // Modal & prompt for required rejection remarks per number or common remark
+    let pendingDecisionReq = null;
+    let drawerRemarkMode = 'common';
 
-    function promptReject(reqId) {
-      pendingRejectReqId = reqId;
-      const r = allRequests.find(x => x.requestId === reqId);
-      const bankName = r ? r.brandName : reqId;
-      $('rejectModalBrand').textContent = bankName;
-      $('rejectRemarksInput').value = r && r.remarks ? r.remarks : '';
+    function openDecisionModal() {
+      if (!selectedReq) return;
+      pendingDecisionReq = selectedReq;
+      const unticked = (selectedReq.numbers || []).filter(n => !selectedNumIds.has(n.numberId));
+      const ticked = (selectedReq.numbers || []).filter(n => selectedNumIds.has(n.numberId));
+
+      $('rejectModalBrand').textContent = selectedReq.brandName;
+      $('rejectModalSummary').innerHTML = `
+        <div style="display:flex;gap:12px;align-items:center;padding:10px 14px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:12px;font-size:13px;">
+          <div>Approve: <strong style="color:var(--status-approved);">${ticked.length}</strong></div>
+          <div style="color:var(--border);">|</div>
+          <div>Reject: <strong style="color:var(--status-rejected);">${unticked.length}</strong></div>
+          <div class="hint" style="margin-left:auto;">${unticked.length === selectedReq.numbers.length ? 'Full rejection' : 'Partial rejection'}</div>
+        </div>
+      `;
+
+      // Set radio mode
+      drawerRemarkMode = 'common';
+      const rCommon = $('remarkModeCommon');
+      const rIndiv = $('remarkModeIndiv');
+      if (rCommon) rCommon.checked = true;
+      if (rIndiv) rIndiv.checked = false;
+
+      // Reset common remarks input
+      if ($('rejectRemarksInput')) $('rejectRemarksInput').value = selectedReq.remarks || '';
       $('rejectRemarksErr').style.display = 'none';
-      validateRejectRemarks();
+
+      // Render individual remarks list
+      const indivWrap = $('individualRemarksList');
+      if (indivWrap) {
+        indivWrap.innerHTML = unticked.map((n, idx) => `
+          <div style="margin-bottom:10px;padding:10px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-sm);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12.5px;">
+              <strong style="color:var(--deep-navy);">${idx + 1}. ${esc(n.department)}</strong>
+              <span class="peso font-weight:600;">${esc(n.phoneDisplay)}</span>
+            </div>
+            <textarea class="indiv-remark-field" data-numid="${esc(n.numberId)}" rows="2" placeholder="Required remarks for ${esc(n.phoneDisplay)}..." style="width:100%;font-size:12px;padding:8px;" oninput="validateDecisionModal()">${esc(n.remarks || '')}</textarea>
+          </div>
+        `).join('');
+      }
+
+      setRemarkMode('common');
+      validateDecisionModal();
       $('rejectModal').classList.add('open');
-      setTimeout(() => $('rejectRemarksInput').focus(), 150);
+      setTimeout(() => {
+        if ($('rejectRemarksInput')) $('rejectRemarksInput').focus();
+      }, 150);
+    }
+
+    function setRemarkMode(mode) {
+      drawerRemarkMode = mode;
+      const commonBox = $('commonRemarksBox');
+      const indivBox = $('individualRemarksBox');
+      if (mode === 'common') {
+        if (commonBox) commonBox.style.display = 'block';
+        if (indivBox) indivBox.style.display = 'none';
+      } else {
+        if (commonBox) commonBox.style.display = 'none';
+        if (indivBox) indivBox.style.display = 'block';
+      }
+      validateDecisionModal();
     }
 
     function closeRejectModal() {
       $('rejectModal').classList.remove('open');
-      pendingRejectReqId = null;
+      pendingDecisionReq = null;
     }
 
-    function validateRejectRemarks() {
-      const val = ($('rejectRemarksInput')?.value || '').trim();
+    function validateDecisionModal() {
       const btn = $('btnConfirmReject');
-      if (btn) btn.disabled = !val;
-      if ($('rejectRemarksErr')) $('rejectRemarksErr').style.display = val ? 'none' : 'block';
-    }
+      const err = $('rejectRemarksErr');
+      if (!pendingDecisionReq) return;
 
-    async function submitRejectModal() {
-      const remarks = ($('rejectRemarksInput')?.value || '').trim();
-      if (!remarks) {
-        $('rejectRemarksErr').style.display = 'block';
-        $('btnConfirmReject').disabled = true;
-        return;
-      }
-      const reqId = pendingRejectReqId;
-      closeRejectModal();
-      await decide(reqId, 'rejected', remarks);
-    }
-
-    // Approve / Reject Request (Strictly Approve and Reject only)
-    async function decide(id, status, remarks = '') {
-      if (status === 'rejected' && (!remarks || !remarks.trim())) {
-        promptReject(id);
+      const unticked = (pendingDecisionReq.numbers || []).filter(n => !selectedNumIds.has(n.numberId));
+      if (!unticked.length) {
+        if (btn) btn.disabled = false;
+        if (err) err.style.display = 'none';
         return;
       }
 
-      saveStatusOverride(id, status, remarks);
+      let isValid = false;
+      if (drawerRemarkMode === 'common') {
+        const val = ($('rejectRemarksInput')?.value || '').trim();
+        isValid = val.length > 0;
+      } else {
+        const fields = document.querySelectorAll('.indiv-remark-field');
+        isValid = fields.length > 0 && Array.from(fields).every(f => (f.value || '').trim().length > 0);
+      }
+
+      if (btn) btn.disabled = !isValid;
+      if (err) err.style.display = isValid ? 'none' : 'block';
+    }
+
+    async function submitDecisionModal() {
+      if (!pendingDecisionReq) return;
+      const req = pendingDecisionReq;
+      const unticked = (req.numbers || []).filter(n => !selectedNumIds.has(n.numberId));
+      const commonVal = ($('rejectRemarksInput')?.value || '').trim();
+
+      const decisions = (req.numbers || []).map(n => {
+        if (selectedNumIds.has(n.numberId)) {
+          return {
+            numberId: n.numberId,
+            phoneE164: n.phoneE164,
+            status: 'approved',
+            remarks: ''
+          };
+        } else {
+          let rem = commonVal;
+          if (drawerRemarkMode === 'individual') {
+            const field = document.querySelector(`.indiv-remark-field[data-numid="${n.numberId}"]`);
+            if (field) rem = (field.value || '').trim();
+          }
+          return {
+            numberId: n.numberId,
+            phoneE164: n.phoneE164,
+            status: 'rejected',
+            remarks: rem || commonVal || 'Rejected by operator'
+          };
+        }
+      });
+
+      const tickedCount = (req.numbers || []).filter(n => selectedNumIds.has(n.numberId)).length;
+      let finalStatus = 'partially approved';
+      if (tickedCount === req.numbers.length) finalStatus = 'approved';
+      else if (tickedCount === 0) finalStatus = 'rejected';
+
+      const btn = $('btnConfirmReject');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = dotsLoader() + ' Saving decisions...';
+      }
+
       try {
-        await api('/api/requests/' + id + '/status', {
+        await api('/api/requests/' + req.requestId + '/status', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status, remarks: remarks ? remarks.trim() : '' })
+          body: JSON.stringify({
+            decisions,
+            status: finalStatus,
+            remarks: commonVal
+          })
         });
+
+        saveStatusOverride(req.requestId, finalStatus, commonVal, decisions);
+        closeRejectModal();
+        closeDrawer();
+
         showToast(
-          status === 'approved' ? 'Brand Approved & Live' : 'Brand Request Rejected',
-          `Request ${id} is now ${status}.${status === 'approved' ? ' Caller ID is immediately live across the network.' : ' Remarks sent to enterprise.'}`,
-          status === 'approved' ? 'success' : 'warning',
+          finalStatus === 'approved' ? 'Brand Approved & Live' : (finalStatus === 'rejected' ? 'Brand Request Rejected' : 'Decisions Saved (Partially Approved)'),
+          `Request ${req.requestId}: ${tickedCount} numbers approved, ${unticked.length} numbers rejected with remarks.`,
+          finalStatus === 'approved' ? 'success' : 'warning',
           6000
         );
-        closeDrawer();
+
         await load();
       } catch (e) {
-        $('rMsg').className = 'msg err';
-        $('rMsg').textContent = e.message;
+        if (err) {
+          err.textContent = e.message;
+          err.style.display = 'block';
+        }
+        showToast('Error', e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Submit Decisions';
+        }
+      }
+    }
+
+    async function submitApproveAllNumbers() {
+      if (!selectedReq) return;
+      const req = selectedReq;
+      const decisions = (req.numbers || []).map(n => ({
+        numberId: n.numberId,
+        phoneE164: n.phoneE164,
+        status: 'approved',
+        remarks: ''
+      }));
+
+      try {
+        await api('/api/requests/' + req.requestId + '/status', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            decisions,
+            status: 'approved',
+            remarks: ''
+          })
+        });
+
+        saveStatusOverride(req.requestId, 'approved', '', decisions);
+        closeDrawer();
+        showToast(
+          'Brand Approved & Live',
+          `All ${decisions.length} numbers approved for ${req.brandName}. Caller ID is immediately live across the network.`,
+          'success',
+          6000
+        );
+        await load();
+      } catch (e) {
         showToast('Error', e.message, 'error');
       }
     }
@@ -547,7 +689,7 @@
             <td class="peso" style="font-weight:600;">${peso(r.totalPHP)}</td>
             <td class="hint">${esc(dateStr)}</td>
             <td>
-              <span class="badge ${esc(r.status)}">${esc(r.status)}</span>
+              ${statusBadge(r.status)}
               ${r.status === 'rejected' && r.remarks ? `<div class="hint" style="color:var(--status-rejected);font-size:10.5px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(r.remarks)}">Note: ${esc(r.remarks)}</div>` : ''}
             </td>
             <td>
@@ -560,11 +702,277 @@
       }).join('');
     }
 
+    let selectedNumIds = new Set();
+    let drawerNumSearch = '';
+    let drawerDeptFilter = 'all';
+    let drawerStatusFilter = 'all';
+    let drawerPage = 1;
+    let drawerPageSize = 25;
+
+    function getFilteredDrawerNumbers() {
+      if (!selectedReq || !selectedReq.numbers) return [];
+      const query = drawerNumSearch.toLowerCase().trim();
+      return selectedReq.numbers.filter(n => {
+        if (drawerDeptFilter !== 'all' && n.department !== drawerDeptFilter) return false;
+        if (drawerStatusFilter !== 'all' && (n.status || 'pending') !== drawerStatusFilter) return false;
+        if (!query) return true;
+        const inPhone = (n.phoneDisplay || '').toLowerCase().includes(query) || (n.phoneE164 || '').toLowerCase().includes(query);
+        const inDept = (n.department || '').toLowerCase().includes(query);
+        const inType = (n.numberType || '').toLowerCase().includes(query);
+        const inRem = (n.remarks || '').toLowerCase().includes(query);
+        return inPhone || inDept || inType || inRem;
+      });
+    }
+
+    function toggleSelectAllNumbers(checked) {
+      const filtered = getFilteredDrawerNumbers();
+      filtered.forEach(n => {
+        if (checked) selectedNumIds.add(n.numberId);
+        else selectedNumIds.delete(n.numberId);
+      });
+      renderDrawerNumbersSection();
+    }
+
+    function toggleNumberSelection(numId) {
+      if (selectedNumIds.has(numId)) selectedNumIds.delete(numId);
+      else selectedNumIds.add(numId);
+      renderDrawerNumbersSection();
+    }
+
+    function onDrawerSearch(val) {
+      drawerNumSearch = val;
+      drawerPage = 1;
+      renderDrawerNumbersSection();
+    }
+
+    function onDrawerDeptFilter(val) {
+      drawerDeptFilter = val;
+      drawerPage = 1;
+      renderDrawerNumbersSection();
+    }
+
+    function onDrawerStatusFilter(val) {
+      drawerStatusFilter = val;
+      drawerPage = 1;
+      renderDrawerNumbersSection();
+    }
+
+    function onDrawerPageSize(val) {
+      drawerPageSize = val === 'all' ? 99999 : parseInt(val, 10);
+      drawerPage = 1;
+      renderDrawerNumbersSection();
+    }
+
+    function changeDrawerPage(delta) {
+      const filtered = getFilteredDrawerNumbers();
+      const totalPages = Math.max(1, Math.ceil(filtered.length / drawerPageSize));
+      const next = drawerPage + delta;
+      if (next >= 1 && next <= totalPages) {
+        drawerPage = next;
+        renderDrawerNumbersSection();
+      }
+    }
+
+    function updateDrawerFooter() {
+      const footer = $('drawerFooter');
+      if (!footer || !selectedReq) return;
+      const total = (selectedReq.numbers || []).length;
+      const ticked = selectedNumIds.size;
+      const unticked = total - ticked;
+
+      if (ticked === total) {
+        footer.innerHTML = `
+          <div style="flex:1;">
+            <span class="badge approved" style="font-size:12px;padding:4px 10px;">All ${total} Numbers Selected</span>
+          </div>
+          <button class="ok" onclick="submitApproveAllNumbers()" style="padding:10px 24px;font-weight:600;">
+            ✓ Approve All Numbers (${total})
+          </button>
+          <button class="btn sm" onclick="closeDrawer()">Cancel</button>
+        `;
+      } else if (ticked === 0) {
+        footer.innerHTML = `
+          <div style="flex:1;">
+            <span class="badge rejected" style="font-size:12px;padding:4px 10px;">0 Selected &middot; Full Rejection</span>
+          </div>
+          <button class="no" onclick="openDecisionModal()" style="padding:10px 22px;font-weight:600;">
+            ✕ Reject Request (Remarks Required)
+          </button>
+          <button class="btn sm" onclick="closeDrawer()">Cancel</button>
+        `;
+      } else {
+        footer.innerHTML = `
+          <div style="flex:1;">
+            <span class="badge partially-approved" style="font-size:12px;padding:4px 10px;">${ticked} Approve, ${unticked} Reject</span>
+          </div>
+          <button class="ok" onclick="openDecisionModal()" style="padding:10px 22px;font-weight:600;background:var(--primary-blue);">
+            Submit Decisions (${ticked} Approve, ${unticked} Reject) &rarr;
+          </button>
+          <button class="btn sm" onclick="closeDrawer()">Cancel</button>
+        `;
+      }
+    }
+
+    function renderDrawerNumbersSection() {
+      const wrap = $('drawerNumbersContainer');
+      if (!wrap || !selectedReq) return;
+
+      const allNums = selectedReq.numbers || [];
+      const total = allNums.length;
+      const filtered = getFilteredDrawerNumbers();
+      const tickedTotal = selectedNumIds.size;
+      const tickedFiltered = filtered.filter(n => selectedNumIds.has(n.numberId)).length;
+
+      // Unique departments for filter dropdown
+      const depts = Array.from(new Set(allNums.map(n => n.department).filter(Boolean))).sort();
+
+      // Pagination
+      const totalPages = Math.max(1, Math.ceil(filtered.length / drawerPageSize));
+      if (drawerPage > totalPages) drawerPage = totalPages;
+      const startIdx = (drawerPage - 1) * drawerPageSize;
+      const pagedNums = filtered.slice(startIdx, startIdx + drawerPageSize);
+
+      let countHtml = `<strong>${tickedTotal} of ${total}</strong> numbers selected for approval`;
+      if (filtered.length < total) {
+        countHtml += ` &middot; <span style="color:var(--primary-blue);font-weight:600;">(${tickedFiltered} of ${filtered.length} filtered selected)</span>`;
+      }
+
+      const rowsHtml = pagedNums.length ? pagedNums.map(n => {
+        const isTicked = selectedNumIds.has(n.numberId);
+        const statusStr = n.status || 'pending';
+        return `
+          <tr style="cursor:pointer;${isTicked ? 'background:#F0F7FF;' : ''}" onclick="toggleNumberSelection('${esc(n.numberId)}')">
+            <td style="width:36px;text-align:center;" onclick="event.stopPropagation()">
+              <input type="checkbox" ${isTicked ? 'checked' : ''} onchange="toggleNumberSelection('${esc(n.numberId)}')" style="cursor:pointer;width:15px;height:15px;">
+            </td>
+            <td><strong style="color:var(--deep-navy);">${esc(n.department)}</strong></td>
+            <td class="peso" style="font-weight:600;color:var(--deep-navy);">${esc(n.phoneDisplay || n.phoneE164)}</td>
+            <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType || 'Mobile')}</span></td>
+            <td>${statusBadge(statusStr)}</td>
+            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              ${statusStr === 'rejected' && n.remarks 
+                ? `<span class="hint" style="color:var(--status-rejected);font-size:11px;" title="${esc(n.remarks)}">Note: ${esc(n.remarks)}</span>` 
+                : (statusStr === 'approved' 
+                    ? `<span class="hint" style="color:var(--status-approved);font-size:11px;">✓ Active</span>` 
+                    : `<span class="hint" style="font-size:11px;color:var(--text-muted);">${isTicked ? 'Will approve' : 'Will reject'}</span>`)}
+            </td>
+          </tr>
+        `;
+      }).join('') : `
+        <tr>
+          <td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">
+            No numbers match the current search or filters.
+          </td>
+        </tr>
+      `;
+
+      wrap.innerHTML = `
+        <div style="background:#FFFFFF;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;">
+          <!-- Controls Bar: Search, Dept, Status, Page Size -->
+          <div style="padding:10px 12px;background:#F8FAFD;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+            <div style="flex:1;min-width:180px;">
+              <input type="text" value="${esc(drawerNumSearch)}" placeholder="Search phone, dept, remarks..." style="width:100%;font-size:12px;padding:6px 10px;height:32px;" oninput="onDrawerSearch(this.value)">
+            </div>
+            <div style="width:140px;">
+              <select style="width:100%;font-size:12px;padding:5px 8px;height:32px;" onchange="onDrawerDeptFilter(this.value)">
+                <option value="all" ${drawerDeptFilter === 'all' ? 'selected' : ''}>All Depts (${depts.length})</option>
+                ${depts.map(d => `<option value="${esc(d)}" ${drawerDeptFilter === d ? 'selected' : ''}>${esc(d)}</option>`).join('')}
+              </select>
+            </div>
+            <div style="width:120px;">
+              <select style="width:100%;font-size:12px;padding:5px 8px;height:32px;" onchange="onDrawerStatusFilter(this.value)">
+                <option value="all" ${drawerStatusFilter === 'all' ? 'selected' : ''}>All Statuses</option>
+                <option value="pending" ${drawerStatusFilter === 'pending' ? 'selected' : ''}>Pending</option>
+                <option value="approved" ${drawerStatusFilter === 'approved' ? 'selected' : ''}>Approved</option>
+                <option value="rejected" ${drawerStatusFilter === 'rejected' ? 'selected' : ''}>Rejected</option>
+              </select>
+            </div>
+            <div style="width:90px;">
+              <select style="width:100%;font-size:12px;padding:5px 8px;height:32px;" onchange="onDrawerPageSize(this.value)">
+                <option value="10" ${drawerPageSize === 10 ? 'selected' : ''}>10 / page</option>
+                <option value="25" ${drawerPageSize === 25 ? 'selected' : ''}>25 / page</option>
+                <option value="50" ${drawerPageSize === 50 ? 'selected' : ''}>50 / page</option>
+                <option value="100" ${drawerPageSize === 100 ? 'selected' : ''}>100 / page</option>
+                <option value="all" ${drawerPageSize >= 99999 ? 'selected' : ''}>Show all</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Live Selection Count Bar -->
+          <div style="padding:8px 12px;background:#F0F4FA;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:12px;">
+            <div>${countHtml}</div>
+            <div class="hint" style="font-size:11px;">Ticked = Approve &middot; Unticked = Reject</div>
+          </div>
+
+          <!-- Table with Sticky Header -->
+          <div class="table-wrap" style="max-height:280px;overflow-y:auto;margin:0;">
+            <table class="data-table" style="font-size:12px;margin:0;">
+              <thead style="position:sticky;top:0;background:#F8FAFD;z-index:2;">
+                <tr>
+                  <th style="width:36px;text-align:center;">
+                    <input type="checkbox" id="selectAllNumbers" onchange="toggleSelectAllNumbers(this.checked)" style="cursor:pointer;width:15px;height:15px;" title="Select all ${filtered.length < total ? filtered.length + ' filtered' : 'numbers'}">
+                  </th>
+                  <th>Department</th>
+                  <th>Phone Number</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Note / Decision</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+
+          <!-- Pagination Bar -->
+          <div style="padding:8px 12px;background:#F8FAFD;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--text-muted);">
+            <div>
+              Showing <strong>${filtered.length ? startIdx + 1 : 0}</strong> - <strong>${Math.min(startIdx + drawerPageSize, filtered.length)}</strong> of <strong>${filtered.length}</strong> filtered
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button type="button" class="btn sm" onclick="changeDrawerPage(-1)" ${drawerPage <= 1 ? 'disabled' : ''} style="padding:2px 8px;font-size:11px;">&larr; Prev</button>
+              <span>Page <strong>${drawerPage}</strong> of <strong>${totalPages}</strong></span>
+              <button type="button" class="btn sm" onclick="changeDrawerPage(1)" ${drawerPage >= totalPages ? 'disabled' : ''} style="padding:2px 8px;font-size:11px;">Next &rarr;</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Set indeterminate state on select all checkbox
+      const selectAll = $('selectAllNumbers');
+      if (selectAll) {
+        selectAll.checked = filtered.length > 0 && tickedFiltered === filtered.length;
+        selectAll.indeterminate = tickedFiltered > 0 && tickedFiltered < filtered.length;
+      }
+
+      updateDrawerFooter();
+    }
+
     // Open Drawer Side Panel
     function openRequestDrawer(requestId) {
       const r = allRequests.find(x => x.requestId === requestId);
       if (!r) return;
       selectedReq = r;
+
+      // Initialize Selection state
+      selectedNumIds.clear();
+      (r.numbers || []).forEach(n => {
+        if (r.status === 'approved') {
+          selectedNumIds.add(n.numberId);
+        } else if (r.status === 'rejected') {
+          // unticked
+        } else {
+          // pending or partially approved: approved & pending numbers are ticked
+          if (n.status === 'approved' || n.status === 'pending' || !n.status) {
+            selectedNumIds.add(n.numberId);
+          }
+        }
+      });
+
+      drawerNumSearch = '';
+      drawerDeptFilter = 'all';
+      drawerStatusFilter = 'all';
+      drawerPage = 1;
+      drawerPageSize = 25;
 
       $('drawerBankName').textContent = r.brandName;
       $('drawerReqId').textContent = r.requestId + ' · ' + (r.packageName || 'Package');
@@ -584,14 +992,6 @@
         `
         : `<div class="hint" style="padding:10px;background:#F8FAFD;border-radius:var(--radius-sm);">No custom logo uploaded. Default placeholder used.</div>`;
 
-      const numRows = (r.numbers || []).map(n => `
-        <tr>
-          <td><span style="font-weight:600;">${esc(n.department)}</span></td>
-          <td class="peso" style="font-weight:600;color:var(--deep-navy);">${esc(n.phoneDisplay)}</td>
-          <td><span class="chip" style="font-size:10.5px;">${esc(n.numberType)}</span></td>
-        </tr>
-      `).join('');
-
       const callReason = r.callReason || r.tagline || '';
 
       const previewHtml = r.numbers && r.numbers[0]
@@ -606,12 +1006,12 @@
           })
         : '';
 
-      const remarksHtml = (r.status === 'rejected' && r.remarks)
+      const remarksHtml = (r.remarks)
         ? `
           <div style="margin-bottom:18px;padding:14px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:var(--radius-md);">
             <div style="display:flex;align-items:center;gap:6px;color:#DC2626;font-weight:700;font-size:13px;margin-bottom:4px;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
-              Operator Rejection Remarks
+              Operator Remarks
             </div>
             <div style="color:#991B1B;font-size:13px;line-height:1.4;white-space:pre-wrap;background:#FFFFFF;padding:8px 12px;border-radius:4px;border:1px solid #FECACA;margin-top:6px;">${esc(r.remarks)}</div>
           </div>
@@ -620,7 +1020,7 @@
 
       $('drawerContent').innerHTML = `
         <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
-          <span class="badge ${esc(r.status)}" style="font-size:13px;padding:4px 14px;">Status: ${esc(r.status)}</span>
+          <div>${statusBadge(r.status)}</div>
           <span class="hint">Submitted: ${r.createdAt ? new Date(r.createdAt).toLocaleString('en-PH') : '-'}</span>
         </div>
 
@@ -637,16 +1037,10 @@
           ${logoHtml}
         </div>
 
+        <!-- Numbers Decision Section with Checkbox, Filters & Pagination -->
         <div style="margin-bottom:20px;">
-          <h4 style="margin-bottom:8px;">Assigned Departments & Numbers (${(r.numbers || []).length})</h4>
-          <div class="table-wrap" style="max-height:220px;">
-            <table class="data-table" style="font-size:12.5px;">
-              <thead>
-                <tr><th>Department</th><th>Phone Number</th><th>Type</th></tr>
-              </thead>
-              <tbody>${numRows}</tbody>
-            </table>
-          </div>
+          <h4 style="margin-bottom:8px;">Calling Numbers &amp; Decisions (${(r.numbers || []).length})</h4>
+          <div id="drawerNumbersContainer"></div>
         </div>
 
         <div style="margin-bottom:20px;">
@@ -673,39 +1067,7 @@
         </div>
       `;
 
-      // Footer Actions strictly Approve and Reject only
-      const footer = $('drawerFooter');
-      if (r.status === 'pending') {
-        footer.innerHTML = `
-          <button class="no" onclick="promptReject('${r.requestId}')" style="padding:10px 20px;font-weight:600;">
-            ✕ Reject
-          </button>
-          <button class="ok" onclick="decide('${r.requestId}', 'approved')" style="padding:10px 24px;font-weight:600;">
-            ✓ Approve
-          </button>
-        `;
-      } else if (r.status === 'rejected') {
-        footer.innerHTML = `
-          <div style="flex:1;">
-            <span class="badge rejected" style="font-size:12.5px;padding:4px 10px;">Status: Rejected</span>
-          </div>
-          <button class="ok" onclick="decide('${r.requestId}', 'approved')">
-            Approve Brand
-          </button>
-          <button class="btn sm" onclick="closeDrawer()">Close</button>
-        `;
-      } else {
-        footer.innerHTML = `
-          <div style="flex:1;">
-            <span class="badge approved" style="font-size:12.5px;padding:4px 10px;">✓ Active in Network</span>
-          </div>
-          <button class="no btn sm" onclick="promptReject('${r.requestId}')">
-            Reject Brand
-          </button>
-          <button class="btn sm" onclick="closeDrawer()">Close</button>
-        `;
-      }
-
+      renderDrawerNumbersSection();
       $('reqDrawerBackdrop').classList.add('open');
       $('reqDrawer').classList.add('open');
     }
@@ -913,6 +1275,7 @@
       const activeNums = allNumbers.filter(n => !deletedNums.includes(n.phoneE164));
 
       const pendingCount = activeReqs.filter(r => r.status === 'pending').length;
+      const partialCount = activeReqs.filter(r => r.status === 'partially approved').length;
       const approvedCount = activeReqs.filter(r => r.status === 'approved').length;
       const rejectedCount = activeReqs.filter(r => r.status === 'rejected').length;
 
@@ -939,6 +1302,7 @@
       // Filter Counts
       if ($('cnt_all')) $('cnt_all').textContent = activeReqs.length;
       if ($('cnt_pending')) $('cnt_pending').textContent = pendingCount;
+      if ($('cnt_partial')) $('cnt_partial').textContent = partialCount;
       if ($('cnt_approved')) $('cnt_approved').textContent = approvedCount;
       if ($('cnt_rejected')) $('cnt_rejected').textContent = rejectedCount;
     }
@@ -1004,29 +1368,54 @@
     setInterval(load, 3000);
   </script>
 
-  <!-- Modal: Reject Brand Request with Required Remarks -->
+  <!-- Modal: Reject / Unticked Numbers Remarks -->
   <div id="rejectModal" class="confirm-modal-backdrop">
-    <div class="confirm-modal-box" style="max-width:480px;">
+    <div class="confirm-modal-box" style="max-width:560px;max-height:90vh;display:flex;flex-direction:column;">
       <div class="confirm-modal-header">
-        <h3 class="confirm-modal-title" style="color:var(--status-rejected);">Reject Brand Request</h3>
+        <h3 class="confirm-modal-title" style="color:var(--status-rejected);">Rejection Remarks Required</h3>
         <button type="button" class="confirm-modal-close" onclick="closeRejectModal()">&times;</button>
       </div>
-      <div class="confirm-modal-body">
-        <div style="margin-bottom:12px;font-size:13px;color:var(--deep-navy);">
+      <div class="confirm-modal-body" style="overflow-y:auto;flex:1;">
+        <div style="margin-bottom:8px;font-size:13px;color:var(--deep-navy);">
           Enterprise: <strong id="rejectModalBrand">-</strong>
         </div>
+        <div id="rejectModalSummary"></div>
         <p class="hint" style="margin-bottom:14px;line-height:1.4;">
-          Please enter remarks explaining why this brand request is being rejected. Rejection cannot be submitted without remarks. The enterprise will see these remarks in their portal.
+          Unticked numbers cannot be submitted without remarks. The enterprise will see these remarks in their portal to fix and re-submit.
         </p>
-        <div class="form-group" style="margin-bottom:0;">
-          <label for="rejectRemarksInput">Rejection Remarks <span class="req-star">*</span></label>
-          <textarea id="rejectRemarksInput" rows="4" placeholder="e.g. Logo image resolution is too low, or call reason does not match business guidelines. Please update and resubmit." oninput="validateRejectRemarks()"></textarea>
-          <div id="rejectRemarksErr" class="field-error" style="display:none;margin-top:6px;">Rejection remarks are mandatory before rejection can be submitted.</div>
+
+        <!-- Mode Toggle: Common Remark vs Individual Remarks -->
+        <div style="margin-bottom:14px;padding:10px 12px;background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius-sm);">
+          <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px;">Remark Application Option</div>
+          <div style="display:flex;gap:18px;font-size:12.5px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500;">
+              <input type="radio" id="remarkModeCommon" name="remarkModeChoice" value="common" checked onchange="setRemarkMode('common')">
+              One common remark for all unticked numbers
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:500;">
+              <input type="radio" id="remarkModeIndiv" name="remarkModeChoice" value="individual" onchange="setRemarkMode('individual')">
+              Remarks per number
+            </label>
+          </div>
         </div>
+
+        <!-- 1. Common Remarks Input -->
+        <div id="commonRemarksBox" class="form-group" style="margin-bottom:0;">
+          <label for="rejectRemarksInput">Common Rejection Remarks <span class="req-star">*</span></label>
+          <textarea id="rejectRemarksInput" rows="3" placeholder="e.g. Number not registered under enterprise name, or call reason invalid. Please update and resubmit." oninput="validateDecisionModal()"></textarea>
+        </div>
+
+        <!-- 2. Individual Remarks Inputs -->
+        <div id="individualRemarksBox" style="display:none;">
+          <label style="display:block;margin-bottom:8px;font-size:12px;font-weight:600;color:var(--deep-navy);">Individual Remarks per Number <span class="req-star">*</span></label>
+          <div id="individualRemarksList" style="max-height:220px;overflow-y:auto;padding-right:4px;"></div>
+        </div>
+
+        <div id="rejectRemarksErr" class="field-error" style="display:none;margin-top:8px;">Rejection remarks are mandatory before submission.</div>
       </div>
       <div class="confirm-modal-footer">
         <button type="button" class="btn sm" onclick="closeRejectModal()">Cancel</button>
-        <button type="button" class="btn sm no" id="btnConfirmReject" onclick="submitRejectModal()" disabled style="font-weight:600;">Submit Rejection</button>
+        <button type="button" class="btn sm no" id="btnConfirmReject" onclick="submitDecisionModal()" disabled style="font-weight:600;">Confirm &amp; Submit Decisions</button>
       </div>
     </div>
   </div>
